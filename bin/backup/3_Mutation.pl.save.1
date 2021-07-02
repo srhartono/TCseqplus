@@ -1,0 +1,494 @@
+#!/usr/bin/perl
+
+use strict; use warnings; use mitochy; use Getopt::Std; use FAlite;
+use vars qw($opt_v);
+getopts("v");
+
+my $metaFile = "../../0_Fastq/0_META.TXT";
+my %meta;
+open (my $in0, "<", $metaFile) or die;
+while (my $line = <$in0>) {
+	chomp($line);
+	next if $line =~ /^Library Assembly/;
+	my ($sampleID, $genome, $chr, $beg, $end, $strand, $barcode, $primer, $adapter, $desc) = split("\t", $line);
+	$meta{$sampleID}{coor} = $line;
+	$meta{$sampleID}{barcode} = $barcode;
+	$meta{$sampleID}{primer} = $primer;
+	$meta{$sampleID}{adapter} = $adapter;
+#Library Assembly        Chr     Start   End     Strand  MID     Primer  Adapter Description
+#W1      mm9     chr12   114664888       114664910       -       AGTCAA  CACACAAAGACTCTGGACCTC   CCACGCGTGCTCTACA        Smu_as_bait_site
+
+}
+close $in0;
+
+my ($input1, $namewant) = @ARGV;
+die "\nusage: $YW$0$N $CY<W3_result_filter.tlx>$N\n\n" unless @ARGV;
+my ($sampleID) = $input1 =~ /^.*([A-Z][0-9])_result_filter.tlx/;
+die "Can't parse sampleID (e.g. W3 or S3) from input1 $LPR$input1$N\n" unless defined $sampleID;
+print "SapleID = $sampleID\n\n";
+my ($folder1, $fileName1) = mitochy::getFilename($input1, "folderfull");
+
+my $pri = $meta{$sampleID}{primer}; die "can't find primer for sampleID $sampleID in $LPR$metaFile$N!\n" if not defined $pri;
+my $bar = $meta{$sampleID}{barcode}; die "can't find barcode for sampleID $sampleID in $LPR$metaFile$N!\n" if not defined $bar;
+my $adp = $meta{$sampleID}{adapter}; die "can't find adapter for sampleID $sampleID in $LPR$metaFile$N!\n" if not defined $adp;
+$pri = $bar . $pri;
+
+system("mkdir -p .temp");
+
+my @def;
+my $linecount = 0;
+my %data;
+open (my $in1, "<", $input1) or die "Cannot read from $input1: $!\n";
+open (my $outBed, ">", ".temp/$fileName1.bed") or die "Cannot write to .temp/$fileName1.bed: $!\n";
+while (my $line = <$in1>) {
+	chomp($line);
+	next if $line =~ /^#/;
+	#print "$LPR$fileName1$N: Done $LGN$linecount$N\n" if $linecount % 1e4 == 0;
+	if ($line =~ /^Qname\t/) {
+		@def = split("\t", $line);
+		next;
+	}
+	$linecount ++;
+	my @arr = split("\t", $line);
+	my ($name, $juncid, $chr2, $junc2, $strand2, $beg2, $end2, $chr1, $beg1, $end1, $strand1, $begq, $endq, $lenq) = @arr;
+	my $junc1;
+	$strand1 = $strand1 eq "-1" ? "-" : $strand1 eq "1" ? "+" : die "Can't define strand1 (strand1=$strand1) not 1 or -1!\n\n$line\n\n";
+	$strand2 = $strand2 eq "-1" ? "-" : $strand2 eq "1" ? "+" : die "Can't define strand2 (strand2=$strand2) not 1 or -1!\n\n$line\n\n";
+	$junc1 = $strand1 eq "+" ? $end1 : $beg1;
+	my $junc2b = $strand2 eq "+" ? $beg2 : $end2;
+	die "junc2b $junc2b isn't the same as junc2 $junc2\n\n$line\n\n" if $junc2b ne $junc2;
+
+	my ($order) = scalar(keys(%data)) + 1;
+	#print "$order. $name\n";
+	$data{$name}{order} = $order;
+	$data{$name}{coor} = $line;
+	$data{$name}{junc1} = $junc1;
+	$data{$name}{junc2} = $junc2;
+	$data{$name}{strand1} = $strand1;
+	$data{$name}{strand2} = $strand2;
+
+	print $outBed "$chr1\t$beg1\t$end1\t$name\t0\t$strand1\n";
+	print $outBed "$chr2\t$beg2\t$end2\t$name\t0\t$strand2\n";
+	#print "\t1 Done $name\n";
+#	last if $order == 10;
+}
+close $in1;
+close $outBed;
+
+my $cmd;
+$cmd = "fastaFromBed -fi /home/mitochi/Bowtie2_indexes/mm9/mm9.fa -bed .temp/$fileName1.bed -fo .temp/$fileName1.bed.fa -s -name";
+system("$cmd") == 0 or die "Failed to run $LPR$cmd$N: $!\n\n";
+
+my $inputFA1 = ".temp/$fileName1.bed.fa";
+open (my $inFA1, "<", $inputFA1) or die "Cannot read from $inputFA1: $!\n";
+my $fasta = new FAlite($inFA1);
+my $lastdef = "INIT"; my $lastseq = "INIT";
+while (my $entry = $fasta->nextEntry()) {
+	my $seq = $entry->seq;
+	$seq =~ tr/acgtn/ACGTN/;
+   my $def = $entry->def;
+	my ($name) = $def;
+	$name =~ s/^>//;
+	$name =~ s/\([\+\-]\)$//;
+
+	die "Can't parse name from fasta def $LPR$def$N\n" if not defined $name;
+	if ($lastdef eq $def) {
+		$data{$name}{seq} = "${lastseq}${seq}";
+		$data{$name}{junc} = length($lastseq);
+		$data{$name}{len1} = length($lastseq);
+		$data{$name}{len2} = length($seq);
+		#print "name=$LGN$name$N\n\t$data{$name}{order}: def=$def $LPR lastdef=$N $lastdef\n";
+		$lastdef = "INIT";
+		$lastseq = "INIT";
+	}
+	else {
+		$lastdef = $def;
+		$lastseq = $seq;
+	}
+}
+close $inFA1;
+
+
+my @inputFQ_R1 = <../../0_Fastq/*$sampleID\_R1.fq.gz>;
+my @inputFQ_R2 = <../../0_Fastq/*$sampleID\_R2.fq.gz>;
+die "Can't find input fastq R1 (../../0_Fastq/*$sampleID\_R1.fq.gz)\n" if @inputFQ_R1 == 0;
+die "Can't find input fastq R1 (../../0_Fastq/*$sampleID\_R1.fq.gz)\n" if @inputFQ_R2 == 0;
+die "Found multiple input fastq R1 (../../0_Fastq/*$sampleID\_R1.fq.gz)\n" if @inputFQ_R1 > 1;
+die "Found multiple input fastq R2 (../../0_Fastq/*$sampleID\_R2.fq.gz)\n" if @inputFQ_R2 > 2;
+
+my $total = scalar(keys %data);
+
+$linecount = 0;
+my $count = 0;
+open (my $inFQ1, "zcat $inputFQ_R1[0]|") or die "Cannot read from $inputFQ_R1[0]: $!\n";
+while (my $line = <$inFQ1>) {
+	chomp($line);
+	print "Done fasta1 liencount=$linecount count=$count / total=$total\n" if $linecount % 1e4 == 0;
+	$linecount ++;
+	my ($name) = $line;
+	$name =~ s/^\@//;
+	$name =~ s/ .*$//;
+	#print "\t$LGN$linecount$N R1 $name\n";
+	$line = <$inFQ1>; chomp($line);
+	my $seq = $line;
+	$line = <$inFQ1>; chomp($line);
+	$line = <$inFQ1>; chomp($line);
+	my $qua = $line;
+	
+	if (not defined $data{$name}) {
+	#	print "\t\t$LRD nexted!$N\n";
+		next;
+	}
+	$count ++;
+	#print "\t\t$LGN$count. Included!$N\n$seq\t";
+	$seq =~ tr/acgtn/ACGTN/;
+	#print "$seq\n";
+	#$seq =~ s/^......//;
+	$data{$name}{seq1} = $seq;
+#	last if $count >= scalar(keys %data);
+}
+close $inFQ1;
+
+$linecount = 0;
+$count = 0;
+open (my $inFQ2, "zcat $inputFQ_R2[0]|") or die "Cannot read from $inputFQ_R2[0]: $!\n";
+while (my $line = <$inFQ2>) {
+	chomp($line);
+	print "Done fasta2 liencount=$linecount count=$count / total=$total\n" if $linecount % 1e4 == 0;
+	$linecount ++;
+	my ($name) = $line;
+	$name =~ s/^\@//;
+	$name =~ s/ .*$//;
+	#print "\t$LGN$linecount$N R2 $name\n";
+	$line = <$inFQ2>; chomp($line);
+	my $seq = $line;
+	$line = <$inFQ2>; chomp($line);
+	$line = <$inFQ2>; chomp($line);
+	my $qua = $line;
+	
+	if (not defined $data{$name}) {
+		#print "\t\t$LRD nexted!$N\n";
+		next;
+	}
+	$count ++;
+	#print "\t\t$LGN$count. Included!$N\n$seq\t";
+	$seq =~ tr/acgtn/ACGTN/;
+	$seq = mitochy::revcomp($seq);
+	#print "$seq\n";
+	$data{$name}{seq2} = $seq;
+#	last if $count >= scalar(keys %data);
+}
+close $inFQ2;
+
+my $print = 0;
+open (my $out1, ">", "$fileName1.final.tsv") or die;
+my $header = "name\ttype\tnuc1\tnuc2\tnumber\tperc\tpercnuc1\tpercnuc2\tmean\tsd\tchr1\tbeg1\tend1\tjunc1\tlength1\tstrand1\tchr2\tbeg2\tend2\tjunc2\tlength2\tstrand2\n";
+print $out1 "$header";
+foreach my $name (sort {$data{$a}{order} <=> $data{$b}{order}} keys %data) {
+	my $order = $data{$name}{order};
+	print "$order. Doing $name\n" if $order % 1e4 == 0;
+	my ($namez, $juncid, $chr2, $junc2, $strand2, $beg2, $end2, $chr1, $beg1, $end1, $strand1, $begq, $endq, $lenq) = split("\t", $data{$name}{coor});
+	my $junc1 = $data{$name}{junc1};
+	$junc2 = $data{$name}{junc2};
+	my $junc = $data{$name}{junc};
+	my $lenz1 = $data{$name}{len1};
+	my $lenz2 = $data{$name}{len2};
+	$strand1 = $data{$name}{strand1};
+	$strand2 = $data{$name}{strand2};
+	my $seq1 = $data{$name}{seq1};
+	my $seq2 = $data{$name}{seq2};
+#	$seq1 = mitochy::revcomp($seq1) if $strand1 eq "+";
+#	$seq2 = mitochy::revcomp($seq2) if $strand2 eq "+";
+	my $seq = $data{$name}{seq};
+	my $strand1print = $strand1 eq "+" ? "pos" : "neg";
+	my $strand2print = $strand2 eq "+" ? "pos" : "neg";
+#	open (my $outFA2, ">", ".temp/$fileName1.bed.fa.temp$order") or die "Cannot write to .temp/$fileName1.bed.fa.temp$order: $!\n";
+#	open (my $outFA3, ">", ".temp/$fileName1.bed.fa.no2.temp$order") or die "Cannot write to .temp/$fileName1.bed.fa.no2.temp$order: $!\n";
+	my $cmdpri1 = "echo '>1_$strand1print\_$name\n$seq1\n>0_PRI\_$name\n$pri\n'";
+	my @respri1 = `$cmdpri1 | muscle 2>/dev/null`;
+	my $cmdadp1 = "echo '>1_$strand1print\_$name\n$seq1\n>0_ADP\_$name\n$adp\n'";
+	my @resadp1 = `$cmdadp1 | muscle 2>/dev/null`;
+
+#	my $cmdpri2 = "echo '>2_$strand2print\_$name\n$seq2\n>0_PRI\_$name\n$pri\n'";
+#	my @respri2 = `$cmdpri2 | muscle 2>/dev/null`;
+#	my $cmdadp2 = "echo '>2_$strand2print\_$name\n$seq2\n>0_ADP\_$name\n$adp\n'";
+#	my @resadp2 = `$cmdadp2 | muscle 2>/dev/null`;
+
+#	my $cmd1 = "echo '>1_$strand1print\_$name\n$seq1\n>2_$strand2print\_$name\n$seq2\n>3_con_$name\n$seq\n'";
+#	my @res1 = `$cmd1 | muscle 2>/dev/null`;
+	next if not defined $seq;
+	my $cmd2 = "echo '>1_$strand1print\_$name\n$seq1\n>3_con_$name\n$seq\n'";
+	my @res2 = `$cmd2 | muscle 2>/dev/null`;
+#	my $cmd3 = "echo '>2_$strand2print\_$name\n$seq2\n>3_con_$name\n$seq\n'";
+#	my @res3 = `$cmd3 | muscle 2>/dev/null`;
+
+	my ($beg_pos, $end_pos) = (-1,-1);
+	my ($primer_pos) = parse_aln(\@respri1, "1_", "primer");
+	$beg_pos = $lenz1 - $primer_pos > 2
+#	print "\n${YW}Primer seq1 $primer_pos$N\n";
+	my ($adapter_pos) = parse_aln(\@resadp1, "1_", "adapter");
+	if ($adapter_pos eq -1) {
+		$adapter_pos = $lenz2 > 100 ? $lenz1 + 100 : $lenz2 > 30 ? $lenz1 + $lenz2 - 30 : $lenz1 + $lenz2;
+	}
+#	print "\n${YW}Adapter seq1: $adapter_pos$N\n";
+
+#	print "\n${YW}Primer seq2$N\n";
+#	parse_aln(\@respri2, "2_");
+#	print "\n${YW}Adapter seq2$N\n";
+#	parse_aln(\@resadp2, "2_");
+
+
+#	print "\n${YW}Parsing 1, 2, 3$N\n";
+#	parse_aln(\@res1, "3_con");
+#	print "\n${YW}Parsing 1 and 3$N\n";
+	my ($typehash) = parse_aln(\@res2, "3_con", "none,$primer_pos,$adapter_pos,$data{$name}{junc}");
+	my %type = %{$typehash};
+	$type{tot}{tot} = 0;
+	foreach my $type1 (sort keys %type) {
+		next if $type1 =~ /^inspos|delpos|matpos|mispos|nuc|tot$/;
+		foreach my $type2 (sort keys %{$type{$type1}}) {
+			my $number = $type{$type1}{$type2};
+#			print "$type1 $type2 $number + $type{tot}{tot}\n";
+			$type{tot}{tot} += $number;
+		}
+	}
+	foreach my $type1 (sort keys %type) {
+		next if $type1 =~ /^inspos|delpos|matpos|mispos|tot|nuc$/;
+#		print "$type1\n";
+		foreach my $type2 (sort keys %{$type{$type1}}) {
+			my $number = $type{$type1}{$type2};
+			my ($nuc1, $nuc2);
+			if ($type2 =~ /\w+_\w+/) {
+				($nuc1, $nuc2) = split("_", $type2);
+			}
+			else {
+				$nuc1 = $type1;
+				$nuc2 = $type2;
+			}
+#			print "- $type2: $number";
+			my $perc = int($number/$type{tot}{tot}*10000)/100;
+			my $percnuc1 = 0;
+			my $percnuc2 = 0;
+			if ($nuc1 =~ /^[ACGT]$/) {
+				my $totalnuc = $type{nuc}{$nuc1}; $totalnuc = 0 if not defined $totalnuc;
+				$percnuc1 = $totalnuc == 0 ? 0 : int($number/$type{nuc}{$nuc1}*10000)/100;
+			}
+			if ($nuc2 =~ /^[ACGT]$/) {
+				my $totalnuc = $type{nuc}{$nuc2}; $totalnuc = 0 if not defined $totalnuc;
+				$percnuc2 = $totalnuc == 0 ? 0 : int($number/$type{nuc}{$nuc2}*10000)/100;
+			}
+			my $print1 = "$name\t$type1\t$nuc1\t$nuc2\t$number\t$perc\t$percnuc1\t$percnuc2";
+			print $print1 if defined $namewant and $name eq $namewant;
+			print $out1 $print1;
+			my $type3 = $type1 eq "ins" ? "inspos" : $type1 eq "del" ? "delpos" : $type1 eq "mat" ? "matpos" : $type1 eq "mis" ? "mispos" : "";
+			if ($type3 ne "") {
+#				print " (mean,sd (bp) from junction break: $type{$type3}{$type2})\n";
+				my ($mean, $sd) = split(",", $type{$type3}{$type2});
+				my $print2 = "\t$mean\t$sd";
+				print $print2 if defined $namewant and $name eq $namewant;
+				print $out1 $print2;
+			}
+			else {
+				die "shouldn't happen with type1=$type1, type2=$type2, number=$number, type3=$type3\n";
+			}
+			my $print3 = "\t$chr1\t$beg1\t$end1\t$junc1\t$lenz1\t$strand1\t$chr2\t$beg2\t$end2\t$junc2\t$lenz2\t$strand2\n";
+			print $print3 if defined $namewant and $name eq $namewant;
+			print $out1 $print3;
+		}
+	}
+#	print "\n${YW}Parsing 2 and 3$N\n";
+#	parse_aln(\@res3, "3_con");
+	#my $cmd3 = ">1_$strand1print\_$name\n$seq1\n>3_con_$name\n$seq\n";
+#	close $outFA2;
+#	close $outFA3;
+#	my @line2 = `muscle -in .temp/$fileName1.bed.fa.temp$order 2> /dev/null`;
+	#system($cmd2) == 0 or print "\tFailed to run $LPR$cmd2$N: $!\n\n";
+	#my $alnFile2 = ".temp/$fileName1.bed.fa.temp$order.aln";
+	#print "$alnFile2\n" if $print < 10;
+#	my @line3 = `muscle -in .temp/$fileName1.bed.fa.no2.temp$order 2>/dev/null`;
+	#system($cmd3) == 0 or print "\tFailed to run $LPR$cmd3$N: $!\n\n";
+	#my $alnFile3 = ".temp/$fileName1.bed.fa.no2.temp$order.aln";
+	#print "$alnFile3\n" if $print < 10;
+	#$print ++;
+#	parse_aln(\@line2);
+#	die;	
+}
+close $out1;
+
+sub parse_aln {
+	my ($lines, $leader, $type) = @_;
+	my ($beg0, $end0) = (-1,-1);
+	my $junc = 0;
+	if ($type =~ /^none/) {
+		($type, $beg0, $end0, $junc) = split(",", $type);
+	}
+	else {
+		($beg0, $end0, $junc) = (-1, -1, 0);
+	}
+	my @line = @{$lines};
+	my ($def, $seq) = ("INIT", "");
+	my %seq;
+	my %type;
+	my $printnamewant = 0;
+	for (my $i = 0; $i < @line; $i++) {
+		my $line = $line[$i]; chomp($line);
+		if ($line =~ /^>/) {
+			if ($def ne "INIT") {
+				$printnamewant = 1 if defined $namewant and $def =~ /$namewant/i;
+				$seq{$def} = $seq;
+				print "$def\t$seq\n" if $printnamewant eq 1;
+			}
+			$seq = "";
+			$def = $line;
+		}
+		else {
+			$seq .= $line;
+		}
+	}
+	$seq{$def} = $seq if $def ne "INIT";
+	print "$def\t$seq\n" if $def ne "INIT" and $printnamewant eq 1;
+	undef $def;
+	undef $seq;
+	print "\n" if $printnamewant eq 1;
+	foreach my $def1 (sort keys %seq) {
+		next if $def1 !~ /$leader/;
+		foreach my $def2 (sort keys %seq) {
+			next if $def1 eq $def2;
+			my @seq1 = split("", $seq{$def1});
+			my @seq2 = split("", $seq{$def2});
+			my ($mat, $mis, $ins, $del, $currmat, $maxmat, $len1, $len2) = (0,0,0,0,0,0,0,0);
+			my $prev = "NA";
+         my $maxpos = 0;
+         my $currpos = "NA";
+			my $currins = "";
+			my $currdel = "";
+         my $ind1 = 0;
+         my $ind2 = 0;
+			my %type2;
+			for (my $i = 0; $i < @seq1; $i++) {
+				my $seq1 = $seq1[$i]; 
+				my $seq2 = $seq2[$i]; 
+				$len2 ++ if $seq2 ne "-" and $seq2 ne "x";
+				$len1 ++ if $seq1 ne "-" and $seq1 ne "x";
+            $ind1 ++ if $seq1 ne "-" and $seq1 ne "x";
+            $ind2 ++ if $seq2 ne "-" and $seq2 ne "x";
+
+				if (($ind2 >= $beg0 or $beg0 eq -1) and ($ind2 <= $end0 or $end0 eq -1)) {
+					$type{nuc}{$seq1} ++;
+					$type{tot}{tot} ++;
+					if ($seq1 eq $seq2 and $seq1 ne "-") {
+						$mat ++;
+						my $nuc1nuc2 = "$seq1\_$seq2";
+						$type{mat}{$nuc1nuc2} ++;
+						my $matpos = $ind1 - $junc;
+						push(@{$type2{matpos}{$nuc1nuc2}}, $matpos);
+	#					$currmat = 1 if $prev ne "mat" and $prev ne "mis";
+	  					$currmat ++;
+						$currpos = $ind1 if $currpos eq "NA";
+	#               if ($prev eq "mat" or $prev eq "mis") {
+	#   					$currmat ++;
+	#                  $currpos = $ind1 - 1 if $currpos eq "NA";
+	#               }
+						$prev = "mat";
+					}
+					elsif ($seq1 ne $seq2 and $seq1 ne "-" and $seq2 ne "-") {
+						$mis ++;
+						my $nuc1nuc2 = "$seq1\_$seq2";
+						$type{mis}{$nuc1nuc2} ++;
+						my $mispos = $ind1 - $junc;
+						push(@{$type2{mispos}{$nuc1nuc2}}, $mispos);
+	#					$currmat = 1 if $prev ne "mat" and $prev ne "mis";
+	#               if ($prev eq "mat" or $prev eq "mis") {
+	  					$currmat ++;
+						$currpos = $ind1 if $currpos eq "NA";
+						$prev = "mis";
+					}
+					elsif ($currpos ne "NA") {
+   	            $maxpos = $currpos if $maxmat < $currmat;
+						$maxmat = $currmat if $maxmat < $currmat;
+   	            $currmat = 1;
+   	            $currpos = "NA";
+					}
+					if ($seq1 eq "-" and $seq2 ne "-") {
+						$ins ++;
+#					print "ind2 = $ind2, beg0=$beg0, end0=$end0, ins=$seq2, currins = $currins\n";
+						$currins .= $seq2;
+						$prev = "ins";
+					}
+					elsif ($currins ne "") {
+						if (length($currins) < 20) {
+							my $inspos = $ind1 - $junc;
+							push(@{$type2{inspos}{$currins}}, $inspos);
+							$type{ins}{$currins} ++;
+						}
+#						print "INS: $currins $type{ins}{$currins}\n";
+						$currins = "";
+					}
+					if ($seq1 ne "-" and $seq2 eq "-") {
+						$del ++;
+#					print "ind2 = $ind2, beg0=$beg0, end0=$end0, del=$seq2, currdel = $currdel\n";
+						$currdel .= $seq1;
+						$prev = "del";
+					}
+					elsif ($currdel ne "") {
+						if (length($currdel) < 20) {
+							my $delpos = $ind1 - $junc;
+							push(@{$type2{delpos}{$currdel}}, $delpos);
+							$type{del}{$currdel} ++;
+						}
+#						print "DEL: $currdel $type{del}{$currdel}\n";
+						$currdel = "";
+					}
+				}
+			}
+			if ($currins ne "") {
+				if (length($currins) < 20) {
+					my $inspos = $ind1 - $junc;
+					push(@{$type2{inspos}{$currins}}, $inspos);
+					$type{ins}{$currins} ++;
+				}
+#				print "INS: $currins $type{ins}{$currins}\n";
+				$currins = "";
+			}
+			if ($currdel ne "") {
+				if (length($currdel) < 20) {
+					my $delpos = $ind1 - $junc;
+					push(@{$type2{delpos}{$currdel}}, $delpos);
+					$type{del}{$currdel} ++;
+				}
+#				print "DEL: $currdel $type{del}{$currdel}\n";
+				$currdel = "";
+			}
+			foreach my $type1 (sort keys %type2) {
+				foreach my $type2 (sort keys %{$type2{$type1}}) {
+					my $mean = int(100*mitochy::mean(@{$type2{$type1}{$type2}}))/100;
+					my $sd = int(mitochy::sd(@{$type2{$type1}{$type2}}))/100;
+					$type{$type1}{$type2} = "$mean,$sd";
+				}
+			}
+			my $percmaxmat = int(1000*$maxmat/$len2)/10;
+#			print "$def2\tmat=$mat, mis=$mis, ins=$ins, del=$del, max cons pos=$maxpos, match=$maxmat ($percmaxmat \%), len1=$len1, len2=$len2\nbeg0=$beg0, end0=$end0\n";
+			my $wantpos = -1;
+			if ($type eq "primer") {
+				$wantpos = $percmaxmat > 80 ? $maxpos + $maxmat : -1;
+				return($wantpos);
+			}
+			if ($type eq "adapter") {
+				$wantpos = $percmaxmat > 80 ? $maxpos : -1;
+				return($wantpos);
+			}
+			if ($type =~ /none/) {
+				return(\%type);
+			}
+		}
+	}
+}
+__END__
+Qname   JuncID  Rname   Junction        Strand  Rstart  Rend    B_Rname B_Rstart        B_Rend  B_Strand        B_Qstart        B_Qend  Qstart  Qend    Qlen    B_Cigar Cigar   Seq     J_Seq      Barcode unaligned       baitonly        uncut   misprimed       freqcut largegap        mapqual breaksite       sequential      repeatseq       duplicate
+M02034:489:000000000-CYYL8:1:1101:16291:1246    1       chr12   114663366       -1      114663157       114663366       chr12   114664820       114664909       -1      7       96      96310      343     90M     34M5I7M1X7M1X35M1X3M1X1M1X2M1X21M1X2M1X14M1X6M1X27M1X4M1X1M1X2M3X14M1X7M1X5M    ACAGTGCACACAAAGACTCTGGACCTCTCCGAAACCAGGCACCGCAAATGGTAAGCCAGAGGCAGCCACAGCTGTGGCTGCTGCTCTTAAAGCTTGCTGAGCTGGGGTGAGCTGGGGTGAGCTGAGCTGAGCTGGGGTGAGATGAGCTGTGCTGGGGTGAGCTGAGCTGGGGTGAGCTGAGCTGATCTGAGCTGGGCTGAGCTGAGCTGAGCTGAGGTGGGCTGGGGTGAGCTGGGCTGAGGTGAGCTGGGGTGAGCTGGGGTGAGCTGGGCTGGGGTGAGCTGAGCTGAGCTGGGGTGAGCTGAGGTGACCACGCGTGCTCTACAACTTTCGTAAGATCGTA     
+
+MUSCLE (3.8) multiple sequence alignment
+
+
+2_neg_M02034:489:000000000-CYYL8      -----------------GTTGGA------GGATATGGGGGA--------GGCGAGCATGA
+

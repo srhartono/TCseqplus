@@ -1,0 +1,1199 @@
+#!/usr/bin/perl
+
+use strict; use warnings; use mitochy; use Getopt::Std; use FAlite;
+use vars qw($opt_v);
+getopts("v");
+
+my $muscleparam = "-maxiters 64";
+my $metaFile = "../../0_Fastq/0_META.TXT";
+my %meta;
+open (my $in0, "<", $metaFile) or die;
+while (my $line = <$in0>) {
+	chomp($line);
+	next if $line =~ /^Library Assembly/;
+	my ($sampleID, $genome, $chr, $beg, $end, $strand, $barcode, $primer, $adapter, $desc) = split("\t", $line);
+	$meta{$sampleID}{coor} = $line;
+	$meta{$sampleID}{barcode} = $barcode;
+	$meta{$sampleID}{primer} = $primer;
+	$meta{$sampleID}{adapter} = $adapter;
+#Library Assembly        Chr     Start   End     Strand  MID     Primer  Adapter Description
+#W1      mm9     chr12   114664888       114664910       -       AGTCAA  CACACAAAGACTCTGGACCTC   CCACGCGTGCTCTACA        Smu_as_bait_site
+
+}
+close $in0;
+
+my $lenmax1 = 50;#99999;
+my $lenmax2 = 50;#99999;
+my ($input1, $namewant) = @ARGV;
+die "\nusage: $YW$0$N $CY<W3_result_filter.tlx>$N\n\n" unless @ARGV;
+my ($sampleID) = $input1 =~ /^.*([A-Z][0-9])_result_filter.tlx/;
+die "Can't parse sampleID (e.g. W3 or S3) from input1 $LPR$input1$N\n" unless defined $sampleID;
+print "SapleID = $sampleID\n\n";
+my ($folder1, $fileName1) = mitochy::getFilename($input1, "folderfull");
+
+my $pri = $meta{$sampleID}{primer}; die "can't find primer for sampleID $sampleID in $LPR$metaFile$N!\n" if not defined $pri;
+my $bar = $meta{$sampleID}{barcode}; die "can't find barcode for sampleID $sampleID in $LPR$metaFile$N!\n" if not defined $bar;
+my $adp = $meta{$sampleID}{adapter}; die "can't find adapter for sampleID $sampleID in $LPR$metaFile$N!\n" if not defined $adp;
+$pri = $bar . $pri;
+
+system("mkdir -p .temp");
+
+my @def;
+my $linecount = 0;
+my %data;
+open (my $in1, "<", $input1) or die "Cannot read from $input1: $!\n";
+open (my $outBed, ">", ".temp/$fileName1.bed") or die "Cannot write to .temp/$fileName1.bed: $!\n";
+while (my $line = <$in1>) {
+	chomp($line);
+	next if $line =~ /^#/;
+	#print "$LPR$fileName1$N: Done $LGN$linecount$N\n" if $linecount % 1e4 == 0;
+	if ($line =~ /^Qname\t/) {
+		@def = split("\t", $line);
+		next;
+	}
+	$linecount ++;
+	my @arr = split("\t", $line);
+	my ($name, $juncid, $chr2, $junc2, $strand2, $beg2, $end2, $chr1, $beg1, $end1, $strand1, $begq, $endq, $lenq) = @arr;
+	my $junc1;
+	$strand1 = $strand1 eq "-1" ? "-" : $strand1 eq "1" ? "+" : die "Can't define strand1 (strand1=$strand1) not 1 or -1!\n\n$line\n\n";
+	$strand2 = $strand2 eq "-1" ? "-" : $strand2 eq "1" ? "+" : die "Can't define strand2 (strand2=$strand2) not 1 or -1!\n\n$line\n\n";
+	$junc1 = $strand1 eq "+" ? $end1 : $beg1;
+	my $junc2b = $strand2 eq "+" ? $beg2 : $end2;
+	die "junc2b $junc2b isn't the same as junc2 $junc2\n\n$line\n\n" if $junc2b ne $junc2;
+
+	my ($order) = scalar(keys(%data)) + 1;
+	#print "$order. $name\n";
+	$data{$name}{order} = $order;
+	$data{$name}{coor} = $line;
+	$data{$name}{junc1} = $junc1;
+	$data{$name}{junc2} = $junc2;
+	$data{$name}{strand1} = $strand1;
+	$data{$name}{strand2} = $strand2;
+	$data{$name}{lenz2} = $end2 - $beg2;
+	$data{$name}{lenz1} = $end1 - $beg1;
+
+	my $beg1_20 = $strand1 eq "-" ? $beg1 - ($end2-$beg2) : $beg1;
+	my $end1_20 = $strand1 eq "-" ? $end1 : $end1 + ($end2 - $beg2);
+	my $beg2_20 = $strand2 eq "-" ? $beg2 : $beg2 - ($end1 - $beg1);
+	my $end2_20 = $strand2 eq "-" ? $end2 + ($end1 - $beg1) : $end2;
+	print $outBed "$chr1\t$beg1_20\t$end1_20\t$name\t0\t$strand1\n";
+	print $outBed "$chr2\t$beg2_20\t$end2_20\t$name\t0\t$strand2\n";
+	print "\t1 Done $name\n" if defined $namewant;
+	last if $name eq "M02034:489:000000000-CYYL8:1:1101:20332:5917";
+#	last if $order == 1000;
+#	last if $order == 1000 and defined $namewant;
+}
+close $in1;
+close $outBed;
+
+my $cmd;
+$cmd = "fastaFromBed -fi /home/mitochi/Bowtie2_indexes/mm9/mm9.fa -bed .temp/$fileName1.bed -fo .temp/$fileName1.bed.fa -s -name";
+system("$cmd") == 0 or die "Failed to run $LPR$cmd$N: $!\n\n";
+
+my $inputFA1 = ".temp/$fileName1.bed.fa";
+open (my $inFA1, "<", $inputFA1) or die "Cannot read from $inputFA1: $!\n";
+my $fasta = new FAlite($inFA1);
+my $lastdef = "INIT"; my $lastseqlong = "INIT";
+while (my $entry = $fasta->nextEntry()) {
+	my $seqlong = $entry->seq;
+	$seqlong =~ tr/acgtn/ACGTN/;
+	my $seq = $seqlong;
+   my $def = $entry->def;
+	my ($name) = $def;
+	$name =~ s/^>//;
+	$name =~ s/\([\+\-]\)$//;
+
+	die "Can't parse name from fasta def $LPR$def$N\n" if not defined $name;
+	if ($lastdef eq $def) {
+		my $lenz1 = $data{$name}{lenz1};		
+		my $lenz2 = $data{$name}{lenz2};		
+		my ($seq2_extra, $seq2) = $seqlong =~ /^(.{$lenz1})(.+)$/;
+		my ($seq1, $seq1_extra) = $lastseqlong =~ /^(.+)(.{$lenz2})$/;
+		$data{$name}{seq} = "${seq1}${seq2}";
+		$data{$name}{seqC1L} = $seq1;
+		$data{$name}{seqC2R} = $seq2;
+		$data{$name}{seqC1R} = $seq1_extra;
+		$data{$name}{seqC2L} = $seq2_extra;
+		$data{$name}{len1} = length($seq1);
+		$data{$name}{len2} = length($seq2);
+		print "name=$LGN$name$N\n\t$data{$name}{order}: def=$def $LPR lastdef=$N $lastdef\n" if defined $namewant;
+		$lastdef = "INIT";
+		$lastseqlong = "INIT";
+	}
+	else {
+		$lastdef = $def;
+		$lastseqlong = $seqlong;
+	}
+}
+close $inFA1;
+
+
+my @inputFQ_R1 = <../../0_Fastq/*$sampleID\_R1.fq.gz>;
+my @inputFQ_R2 = <../../0_Fastq/*$sampleID\_R2.fq.gz>;
+die "Can't find input fastq R1 (../../0_Fastq/*$sampleID\_R1.fq.gz)\n" if @inputFQ_R1 == 0;
+die "Can't find input fastq R1 (../../0_Fastq/*$sampleID\_R1.fq.gz)\n" if @inputFQ_R2 == 0;
+die "Found multiple input fastq R1 (../../0_Fastq/*$sampleID\_R1.fq.gz)\n" if @inputFQ_R1 > 1;
+die "Found multiple input fastq R2 (../../0_Fastq/*$sampleID\_R2.fq.gz)\n" if @inputFQ_R2 > 2;
+
+my $total = scalar(keys %data);
+
+$linecount = 0;
+my $count = 0;
+open (my $inFQ1, "zcat $inputFQ_R1[0]|") or die "Cannot read from $inputFQ_R1[0]: $!\n";
+while (my $line = <$inFQ1>) {
+	chomp($line);
+	print "Done fasta1 liencount=$linecount count=$count / total=$total\n" if $linecount % 1e4 == 0;
+	$linecount ++;
+	my ($name) = $line;
+	$name =~ s/^\@//;
+	$name =~ s/ .*$//;
+	#print "\t$LGN$linecount$N R1 $name\n";
+	$line = <$inFQ1>; chomp($line);
+	my $seq = $line;
+	$line = <$inFQ1>; chomp($line);
+	$line = <$inFQ1>; chomp($line);
+	my $qua = $line;
+	
+	if (not defined $data{$name}) {
+	#	print "\t\t$LRD nexted!$N\n";
+		next;
+	}
+	$count ++;
+	#print "\t\t$LGN$count. Included!$N\n$seq\t";
+	$seq =~ tr/acgtn/ACGTN/;
+	#print "$seq\n";
+	#$seq =~ s/^......//;
+	$data{$name}{seq1} = $seq;
+	last if $count >= scalar(keys %data);# and defined $namewant;
+	#last if $count >= scalar(keys %data) and defined $namewant;
+}
+close $inFQ1;
+
+$linecount = 0;
+$count = 0;
+open (my $inFQ2, "zcat $inputFQ_R2[0]|") or die "Cannot read from $inputFQ_R2[0]: $!\n";
+while (my $line = <$inFQ2>) {
+	chomp($line);
+	print "Done fasta2 liencount=$linecount count=$count / total=$total\n" if $linecount % 1e4 == 0;
+	$linecount ++;
+	my ($name) = $line;
+	$name =~ s/^\@//;
+	$name =~ s/ .*$//;
+	#print "\t$LGN$linecount$N R2 $name\n";
+	$line = <$inFQ2>; chomp($line);
+	my $seq = $line;
+	$line = <$inFQ2>; chomp($line);
+	$line = <$inFQ2>; chomp($line);
+	my $qua = $line;
+	
+	if (not defined $data{$name}) {
+		#print "\t\t$LRD nexted!$N\n";
+		next;
+	}
+	$count ++;
+	#print "\t\t$LGN$count. Included!$N\n$seq\t";
+	$seq =~ tr/acgtn/ACGTN/;
+	$seq = mitochy::revcomp($seq);
+	#print "$seq\n";
+	$data{$name}{seq2} = $seq;
+	last if $count >= scalar(keys %data);# and defined $namewant;
+	#last if $count >= scalar(keys %data) and defined $namewant;
+}
+close $inFQ2;
+
+my $totalall = 0;
+my $good = 0;
+my $nexted_sequndef = 0;
+my $nexted_bothshort = 0;
+my $nexted_begshort = 0;
+my $nexted_endshort = 0;
+my $print = 0;
+open (my $out1, ">", "$fileName1.$lenmax1.$lenmax2.final.tsv") or die;
+open (my $outLog, ">", "$fileName1.$lenmax1.$lenmax2.final.tsv.LOG") or die;
+my $header = "name\ttype\tnuc1\tnuc2\tnumber\tperc\tpercnuc1\tpercnuc2\tmean\tsd\tchr1\tbeg1\tend1\tjunc1\tlength1\tstrand1\tchr2\tbeg2\tend2\tjunc2\tlength2\tstrand2\n";
+print $out1 "$header";
+foreach my $name (sort {$data{$a}{order} <=> $data{$b}{order}} keys %data) {
+	$totalall ++;
+	my $order = $data{$name}{order};
+	print "$order. Doing $name\n" if $order % 100 == 0;
+	my ($namez, $juncid, $chr2, $junc2, $strand2, $beg2, $end2, $chr1, $beg1, $end1, $strand1, $begq, $endq, $lenq) = split("\t", $data{$name}{coor});
+	my $junc1 = $data{$name}{junc1};
+	$junc2 = $data{$name}{junc2};
+	my $seqC1L = $data{$name}{seqC1L};
+	my $seqC2R = $data{$name}{seqC2R};
+	my $seqC1R = $data{$name}{seqC1R};
+	my $seqC2L = $data{$name}{seqC2L};
+	my $lenz1 = $data{$name}{len1};
+	my $lenz2 = $data{$name}{len2};
+	$strand1 = $data{$name}{strand1};
+	$strand2 = $data{$name}{strand2};
+	my $seq1 = $data{$name}{seq1};
+	my $seq2 = $data{$name}{seq2};
+	my $seq = $data{$name}{seq};
+	if (not defined $seq) {
+		$nexted_sequndef ++;
+		next;
+	}
+	my $strand1print = $strand1 eq "+" ? "pos" : "neg";
+	my $strand2print = $strand2 eq "+" ? "pos" : "neg";
+	my $cmdpri1 = "echo '>1_$strand1print\_$name\n$seq1\n>0_PRI\_$name\n$pri\n'";
+	my @respri1 = `$cmdpri1 | muscle $muscleparam 2>/dev/null`;
+	my $cmdadp1 = "echo '>1_$strand1print\_$name\n$seq1\n>0_ADP\_$name\n$adp\n'";
+	my @resadp1 = `$cmdadp1 | muscle $muscleparam 2>/dev/null`;
+	my $addtoseqC1L = "";#length($seqC2R) >= 20 ? substr($seqC2R,0,20) : $seqC2R;
+	my $seqC1L2 = $seqC1L . $addtoseqC1L;
+	
+	my $cmdjun1 = "echo '>1_$strand1print\_$name\n$seq1\n>0_JUN\_$name\n$seqC1L2\n'";
+	my @resjun1 = `$cmdjun1 | muscle $muscleparam 2>/dev/null`;
+	if (defined $namewant) {
+		print "\nseq1\n" . colorize($seq1) . "\nseqC1L\n" . colorize($seqC1L) . "\nseqC2R\n" . colorize($seqC2R) . "\n\n";
+	}
+
+#	my $cmd1 = "echo '>1_$strand1print\_$name\n$seq1\n>2_$strand2print\_$name\n$seq2\n>3_con_$name\n$seq\n'";
+#	my @res1 = `$cmd1 | muscle $muscleparam 2>/dev/null`;
+	my $cmd2 = "echo '>1_$strand1print\_$name\n$seq1\n>3_con_$name\n$seq\n'";
+	my @res2 = `$cmd2 | muscle $muscleparam 2>/dev/null`;
+#	my $cmd3 = "echo '>1_$strand1print\_$name\n$seq1\n>2_$strand2print\_$name\n$seq2\n>3_con_$name\n$seq\n'";
+#	my @res3 = `$cmd3 | muscle $muscleparam 2>/dev/null`;
+	print "\n${LPR}------------\n$N" if defined $namewant;
+#	print "cmd2=$cmd2\n" if $name eq "M02034:489:000000000-CYYL8:1:1101:7360:4607";
+#	print "res2=\n@res2\n" if $name eq "M02034:489:000000000-CYYL8:1:1101:7360:4607";
+
+	print "${YW}Junc seq1:\n" if defined $namewant;
+	my ($junc_pos) = parse_aln(\@resjun1, "1_", "junc");
+	$junc_pos -= (1 + length($addtoseqC1L));
+	my $orig_junc_pos = $junc_pos;
+	die "Can't get junc pos of:\nseq1\n$seq1\nseqC1L\n$seqC1L\n\n" if $orig_junc_pos eq -1;
+	print "\tjunc_pos = $YW$orig_junc_pos$N (use $junc_pos)\n\n" if defined $namewant;
+	$data{$name}{junc} = $junc_pos;
+	my $junc = $data{$name}{junc};
+	print "${YW}Primer seq1:\n" if defined $namewant;
+	my ($beg_pos, $end_pos, $primer_pos, $adapter_pos, $primer_pos_fix, $adapter_pos_fix) = (-1,-1,-1,-1,-1,-1);
+	($primer_pos, $primer_pos_fix, $beg_pos) = parse_aln(\@respri1, "1_", "primer,-1,-1,$junc");
+#	my $orig_primer_pos = $primer_pos;
+#	$primer_pos = 25 if $primer_pos eq -1;
+#	$beg_pos = $lenz1 >= $lenmax1 + $primer_pos ? $lenz1 - $lenmax1 : $lenz1 >= $primer_pos ? $primer_pos : -99;
+#	print "\tprimer_pos = $YW$orig_primer_pos$N (use $primer_pos, junc = $LGN$junc$N, so beg pos = $beg_pos)\n\n" if defined $namewant;
+
+	print "${YW}Adapter seq1:\n" if defined $namewant;
+	($adapter_pos, $adapter_pos_fix, $end_pos) = parse_aln(\@resadp1, "1_", "adapter,-1,-1,$junc");
+	$beg_pos = -99 if not defined $beg_pos;
+	$end_pos = -99 if not defined $end_pos;
+#	print "\tprimer_pos = $YW$orig_primer_pos$N (use $primer_pos, junc = $LGN$junc$N, so beg pos = $beg_pos)\n\n" if defined $namewant;
+#	my $orig_adapter_pos = $adapter_pos;
+#	next if $adapter_pos < $lenz1 and $adapter_pos ne -1;
+#	$adapter_pos = $lenz1 + $lenz2 - 25 if $adapter_pos eq -1;
+#	$adapter_pos = $lenz1 + $lenz2 - $adapter_pos;
+#	$end_pos = $lenz2 >= $lenmax2 + $adapter_pos ? $lenz1 + $lenmax2 : $lenz2 >= $adapter_pos ? $lenz1 + $lenz2 - $adapter_pos : -99;
+	#print "\tadapter_pos = $YW$orig_adapter_pos$N (use $adapter_pos, junc = $LGN$junc$N, so end pos = $end_pos)$N\n\n" if defined $namewant;
+	if ($beg_pos eq -99 and $end_pos eq -99) {
+		$nexted_bothshort ++;
+		next;
+	}
+	elsif ($beg_pos eq -99) {
+		$nexted_begshort ++;
+		next;
+	}
+	elsif ($end_pos eq -99) {
+		$nexted_endshort ++;
+		next;
+	}
+	else {
+		$good ++;
+	}
+	if ($junc >= length($seq1) - 50) {
+		$nexted_bothshort ++;
+		next;
+	}
+
+
+	LOG($outLog, "\n${YW}>Parsing name=$LCY$name$N, beg0-junc-end0=$beg_pos-$junc-$end_pos ($primer_pos-$adapter_pos, fixed=$primer_pos_fix-$adapter_pos_fix), seq1 and cons$N junc=$junc, junc1=$junc1, junc2=$junc2, ($lenz1 bp, $chr1:$beg1-$end1, $lenz2 bp, $chr2:$beg2-$end2)\n\n","NA");
+	LOG($outLog, "------------------------------------------------\n","NA");
+	LOG($outLog, "0. UNALIGNED SEQUENCES:\n","NA");
+	LOG($outLog, "------------------------------------------------\n\n","NA");
+	LOG($outLog, "CONSENSUS  :\t      " . colorize($data{$name}{seqC1L}) . colorize($data{$name}{seqC2R}) . "\n","NA");
+	LOG($outLog, "IgM BAIT   :\t      " . colorize($data{$name}{seqC1L}) . "$seqC1R\n","NA");
+	LOG($outLog, "READ SEQ   :\t" . colorize($seq1) . "\n","NA");
+	LOG($outLog, "FAR JOINED :\t      $seqC2L" . colorize($data{$name}{seqC2R}) . "\n","NA");# if defined $namewant;
+
+	my ($seqQ1L, $seqQ1R) = $seq1 =~ /^(.{$junc})(.+)$/;
+	my ($mhtot, $mhbeg, $mhend, $mhHASH) = get_mh($name, $seqQ1L, $seqQ1R, $seqC1L, $seqC1R, $seqC2L, $seqC2R, $junc);
+#	print "\nres3:\n" . join("", @res3) . "\n\n";		
+	my %mh = %{$mhHASH} if defined $mhHASH;
+	my $mhseq = ">3_con_$name\n$mh{'3_con'}\n>1_neg_$name\n$mh{'1_seq'}\n>2_neg_$name\n$mh{'1_con'}\n>3_neg_$name\n$mh{'2_con'}";
+	my $die = 0;
+	if ($name eq "M02034:489:000000000-CYYL8:1:1101:7360:4607" or $mh{'3_con'} =~ /N/ or $mh{'1_seq'} =~ /N/ or $mh{'1_con'} =~ /N/ or $mh{'2_con'} =~ /N/) {
+		print "1_seq has N!\n" if $mh{'1_seq'} =~ /N/;
+		print "1_con has N!\n" if $mh{'1_con'} =~ /N/;
+		print "2_con has N!\n" if $mh{'2_con'} =~ /N/;
+		print "3_con has N!\n" if $mh{'3_con'} =~ /N/;
+		$die = 1;
+		if ($die eq 1) {
+			print "\n${YW}>Parsing name=$LCY$name$N, beg0-junc-end0=$beg_pos-$junc-$end_pos ($primer_pos-$adapter_pos, fixed=$primer_pos_fix-$adapter_pos_fix), seq1 and cons$N junc=$junc, junc1=$junc1, junc2=$junc2, ($lenz1 bp, $chr1:$beg1-$end1, $lenz2 bp, $chr2:$beg2-$end2)\n\n";
+			print "------------------------------------------------\n";
+			print "0. UNALIGNED SEQUENCES:\n";
+			print "------------------------------------------------\n\n";
+			print "CONSENSUS  :\t      " . colorize($data{$name}{seqC1L}) . colorize($data{$name}{seqC2R}) . "\n";
+			print "IgM BAIT   :\t      " . colorize($data{$name}{seqC1L}) . "$seqC1R\n";
+			print "READ SEQ   :\t" . colorize($seq1) . "\n";
+			print "FAR JOINED :\t      $seqC2L" . colorize($data{$name}{seqC2R}) . "\n\n";# if defined $namewant;
+			print ">3_con_$name\t" . colorize($mh{'3_con'}) . "\n";
+			print ">1_seq_$name\t" . colorize($mh{'1_seq'}) . "\n";
+			print ">1_con_$name\t" . colorize($mh{'1_con'}) . "\n";
+			print ">2_con_$name\t" . colorize($mh{'2_con'}) . "\n";
+			die "die is $die! \n";
+		}
+	}
+	my @mhseq = split("\n", $mhseq);
+	my ($typehash) = parse_aln(\@mhseq, "1_", "none,$beg_pos,$end_pos,$data{$name}{junc},$primer_pos_fix,$adapter_pos_fix,$mhbeg,$mhend");
+#die "\n";
+
+#	my $cmd3 = 
+#">1_$strand1print\_$name
+#$seqQ1L$seqQ1R
+#>2_$strand2print\_$name
+#$seqC2L$seqC2R
+#>3_con_$name
+#$seqC1L$seqC1R
+#";
+#	my @res3 = `echo '$cmd3' | muscle $muscleparam 2>/dev/null`;
+#
+##	print "\nres3:\n" . join("", @res3) . "\n\n";		
+#	parse_aln(\@res3, "1_", "none,$beg_pos,$end_pos,$data{$name}{junc},$primer_pos_fix,$adapter_pos_fix");
+#	my ($typehash) = parse_aln(\@res2, "1_", "none,$beg_pos,$end_pos,$data{$name}{junc},$primer_pos_fix,$adapter_pos_fix");
+#	#die if defined $namewant and $name eq $namewant;
+#die "\n";
+
+
+
+
+	my %type = %{$typehash};
+	$type{tot}{tot} = 0;
+	foreach my $type1 (sort keys %type) {
+		next if $type1 =~ /^inspos|delpos|matpos|mispos|mhpos|nuc|tot$/;
+		foreach my $type2 (sort keys %{$type{$type1}}) {
+			my $number = $type{$type1}{$type2};
+#			print "$type1 $type2 $number + $type{tot}{tot}\n";
+			$type{tot}{tot} += $number;
+		}
+	}
+	LOG($outLog, "tot,$type{tot}{tot}\n","NA");
+	foreach my $type1 (sort keys %type) {
+		next if $type1 =~ /^(inspos|delpos|matpos|mispos|mhpos|tot|nuc)$/;
+		LOG($outLog, "$type1","NA");
+		foreach my $type2 (sort keys %{$type{$type1}}) {
+			my $number = $type{$type1}{$type2};
+			my ($nuc1, $nuc2);
+			if ($type2 =~ /\w+_\w+/) {
+				($nuc1, $nuc2) = split("_", $type2);
+			}
+			else {
+				$nuc1 = $type1;
+				$nuc2 = $type2;
+			}
+			LOG($outLog, ",$type2=$number","NA");
+			my $perc = int($number/$type{tot}{tot}*10000)/100;
+			my $percnuc1 = 0;
+			my $percnuc2 = 0;
+			if ($nuc1 =~ /^[ACGT]$/) {
+				my $totalnuc = $type{nuc}{$nuc1}; $totalnuc = 0 if not defined $totalnuc;
+				$percnuc1 = $totalnuc == 0 ? 0 : int($number/$type{nuc}{$nuc1}*10000)/100;
+			}
+			if ($nuc2 =~ /^[ACGT]$/) {
+				my $totalnuc = $type{nuc}{$nuc2}; $totalnuc = 0 if not defined $totalnuc;
+				$percnuc2 = $totalnuc == 0 ? 0 : int($number/$type{nuc}{$nuc2}*10000)/100;
+			}
+			my $print1 = "$name\t$type1\t$nuc1\t$nuc2\t$number\t$perc\t$percnuc1\t$percnuc2";
+			print $print1 if defined $namewant and $name eq $namewant;
+			print $out1 $print1;
+			my $type3 = $type1 eq "ins" ? "inspos" : $type1 eq "del" ? "delpos" : $type1 eq "mat" ? "matpos" : $type1 eq "mis" ? "mispos" : $type1 eq "mh" ? "mhpos" : "";
+			if ($type3 ne "") {
+#				print " (mean,sd (bp) from junction break: $type{$type3}{$type2})\n";
+				my ($mean, $sd) = split(",", $type{$type3}{$type2});
+				my $print2 = "\t$mean\t$sd";
+				print $print2 if defined $namewant and $name eq $namewant;
+				print $out1 $print2;
+			}
+			else {
+				die "shouldn't happen with type1=$type1, type2=$type2, number=$number, type3=$type3\n";
+			}
+			my $print3 = "\t$chr1\t$beg1\t$end1\t$junc1\t$lenz1\t$strand1\t$chr2\t$beg2\t$end2\t$junc2\t$lenz2\t$strand2\n";
+			print $print3 if defined $namewant and $name eq $namewant;
+			print $out1 $print3;
+		}
+		LOG($outLog, "\n","NA");
+	}
+	LOG($outLog, "\n--------------------------------\n","NA");
+#	print "\n${YW}Parsing 2 and 3$N\n";
+#	parse_aln(\@res3, "3_con");
+	#my $cmd3 = ">1_$strand1print\_$name\n$seq1\n>3_con_$name\n$seq\n";
+#	close $outFA2;
+#	close $outFA3;
+#	my @line2 = `muscle $muscleparam -in .temp/$fileName1.bed.fa.temp$order 2> /dev/null`;
+	#system($cmd2) == 0 or print "\tFailed to run $LPR$cmd2$N: $!\n\n";
+	#my $alnFile2 = ".temp/$fileName1.bed.fa.temp$order.aln";
+	#print "$alnFile2\n" if $print < 10;
+#	my @line3 = `muscle $muscleparam -in .temp/$fileName1.bed.fa.no2.temp$order 2>/dev/null`;
+	#system($cmd3) == 0 or print "\tFailed to run $LPR$cmd3$N: $!\n\n";
+	#my $alnFile3 = ".temp/$fileName1.bed.fa.no2.temp$order.aln";
+	#print "$alnFile3\n" if $print < 10;
+	#$print ++;
+#	parse_aln(\@line2);
+#	die;	
+}
+close $out1;
+
+open (my $out2, ">", "$fileName1.$lenmax1.$lenmax2.final.tsv.log") or die;
+print $out2 "totalall\t$totalall\ngood\t$good\nnexted_sequndef\t$nexted_sequndef\nnexted_bothshort\t$nexted_bothshort\nnexted_begshort\t$nexted_begshort\nnexted_endshort\t$nexted_endshort\n";
+
+close $out2;
+
+sub colorize {
+	my ($seqs, $juncpos, $reverse) = @_;
+	my $reverseprint = defined $reverse ? "REVERSEPRINTCOLOR" : "colorrev undef";
+#	print "reverse = $reverseprint\n";
+	($seqs) = mitochy::revcomp($seqs) if defined $reverse;
+	my @seq = split("", $seqs);
+	my $total_del = $seqs =~ tr/\-/\-/;
+	my $ind = defined $reverse ? @seq - $total_del + 1 : 0;
+	my $print = "";
+	for (my $i = 0; $i < @seq; $i++) {
+		if ($seq[$i] ne "-") {
+			$ind = defined $reverse ? $ind - 1 : $ind + 1;
+		}
+		if (defined $juncpos and $juncpos ne "NA" and $ind >= $juncpos - 2 and $ind <= $juncpos + 3) {
+			$print .= "$N$seq[$i]$N" if $ind >= $juncpos - 2 and $ind < $juncpos;
+			$print .= "$N$seq[$i]$N" if $ind <= $juncpos + 3 and $ind > $juncpos + 1;
+			$print .= "$LCY$seq[$i]$N" if $ind == $juncpos or $ind == $juncpos + 1;
+		}
+		else {
+			$print .= $LGN . $seq[$i] if $seq[$i] =~ /^a$/i;
+			$print .= $YW . $seq[$i] if $seq[$i] =~ /^c$/i;
+			$print .= $LPR . $seq[$i] if $seq[$i] =~ /^g$/i;
+			$print .= $LRD . $seq[$i] if $seq[$i] =~ /^t$/i;
+			$print .= "$N$seq[$i]" if $seq[$i] !~ /^[acgt]$/i;
+		}
+	}
+	$print .= "$N";
+	return($print);
+}
+
+###########################
+# PARSE ALN #
+###########################
+
+sub parse_aln {
+	my ($lines, $leader, $type, $reverse) = @_;
+	my $reverseprint = defined $reverse ? $reverse : "rev undef";
+	#print "reverse is $reverseprint, type is $type, leader is $leader, lines\n";
+	my ($beg0, $end0) = (-1,-1);
+	my ($primer_pos_fix, $adapter_pos_fix, $mhbeg, $mhend) = (-1,-1,-1,-1);
+	my $junc = 0;
+	if ($type =~ /^(primer|adapter)/) {
+		($type, $beg0, $end0, $junc) = split(",", $type);
+	}
+	elsif ($type =~ /^none/) {
+		($type, $beg0, $end0, $junc, $primer_pos_fix, $adapter_pos_fix, $mhbeg, $mhend) = split(",", $type);
+		($mhbeg, $mhend) = (-1, -1) if not defined $mhbeg;
+	}
+	else {
+		($beg0, $end0, $junc) = (-1, -1, 0);
+	}
+	my @line = @{$lines};
+	my $juncpos = $junc if $junc ne 0;
+	print "junc = $junc juncpos=$juncpos\n" if defined $juncpos and defined $namewant;
+	my ($def, $seq) = ("INIT", "");
+	my %seq;
+	my %type;
+	my $printnamewant = 0;
+	my %print;
+	my ($def1name, $def3name) = ("", "");
+	my $printhead = "";
+	my $printdef1 = "";
+	my $printdef1mat = "";
+	my $printdef2 = "";
+	my $printdef2mat = "";
+	my $printdef3 = "";
+	my $whitespace = "";
+	my %mut;
+	my @mut;
+	for (my $i = 0; $i < @line; $i++) {
+		my $line = $line[$i]; chomp($line);
+		if ($line =~ /^>/) {
+			if ($def ne "INIT") {
+				$printnamewant = 1 if defined $namewant and $def =~ /$namewant/i;
+				$seq{$def} = $seq;
+#				if (defined $namewant) {
+					if ($def =~ /1_neg/) {
+						my @whitespace = (" ") x (length($def));
+						$whitespace = join("", @whitespace);
+						my @number; my @number10; my @flag;
+						for (my $l = 1; $l < (1+length($seq)); $l++) {
+							push(@number10, $l-1) if $l % 10 == 1;
+							push(@number10, (" ") x (10 - length($l))) if $l % 10 == 1;
+							push(@number, (($l % 10)));
+						}
+						@mut = (" ") x @number if @mut == 0;
+						# colorize number with beg0 and end0 and junc
+						if ($type eq "none") {#defined $junc and ($type eq "none")) {
+							@flag = (" ") x (@number);
+							my @seq = split("", $seq);
+							my $seqind = 0; my $flag = 0;
+							for (my $k = 0; $k < @number; $k++) {
+								my $seqchunk = $seq[$k];
+								if ($seqind eq $primer_pos_fix - 2) {
+									$number[$k] = "$LRD$number[$k]$N";
+									$flag[$k] = "P";
+									$flag = 1 if $flag eq 0;
+								}
+								elsif ($seqind eq $adapter_pos_fix -1 + 1) {
+									$number[$k] = "$LRD$number[$k]$N";
+									$flag[$k] = "E";
+									$flag = 0;
+								}
+								elsif ($seqind eq $beg0 - 1) {
+									$number[$k] = "$LRD$number[$k]$N";
+									$flag  = 2;
+									$flag[$k] = $seq[$k];
+								}
+								elsif (($seqind eq $junc - 1) or ($seqind eq $junc)) {
+									$number[$k] = "$LCY$number[$k]$N";
+									$flag[$k] = $seq[$k];
+								}
+								elsif ($seqind eq $end0 - 1) {
+									$flag[$k] = $seq[$k];
+									$number[$k] = "$LPR$number[$k]$N";
+									$flag = 1 if $flag eq 2;
+								}
+								elsif ($flag eq 1) {
+									$flag[$k] = "-";
+								}
+								elsif ($flag eq 2) {
+									$flag[$k] = $seq[$k];
+									$number[$k] = "$YW$number[$k]$N";
+								}
+								$seqind ++ if $seqchunk ne "-";
+							}
+							$whitespace = join("", @whitespace);
+							$printhead .= join("", @whitespace) . "\t" . colorize(join("", @flag), $junc) . "\n";
+						}
+			
+						$printhead .= join("", @whitespace) . "\t" . join("", @number10) . "\n";
+						$printhead .= join("", @whitespace) . "\t" . join("", @number) . "\n";
+					}
+					if ($def =~ /1_neg/) {
+						$def1name = $def;
+						$printdef1 .= "$def\t" . colorize($seq, $junc, $reverse) . "\n" if $type eq "none";# if defined $namewant;# and $printnamewant eq 1;
+						$printdef1 .= "$def\t" . colorize($seq) . "\n" if $type ne "none";# if defined $namewant;# and $printnamewant eq 1;
+					}
+					elsif ($def =~ /3_con/) {
+						$def3name = $def;
+						$printdef3 .= "$def\t" . colorize($seq, "NA", $reverse) . "\n";# if defined $namewant;# and $printnamewant eq 1;
+					}
+					else {
+						$print{$def} = "$def\t" . colorize($seq, "NA", $reverse) . "\n";# if defined $namewant;# and $printnamewant eq 1;
+					}
+				}
+#			}
+			$seq = "";
+			$def = $line; $def =~ s/>//;
+		}
+		else {
+			$seq .= $line;
+		}
+	}
+	$seq{$def} = $seq if $def ne "INIT";
+#	die "juncpos = $junc, junc=$junc\n" if $junc ne 0;
+#	if (defined $namewant and $def ne "INIT") {
+	if (($type eq "none" or defined $namewant) and $def ne "INIT") {#efined $namewant and $def ne "INIT") {
+		if ($def =~ /1_neg/) {
+			$printdef1 .= "$def\t" . colorize($seq, $junc, $reverse) . "\n" if $type eq "none";
+			$printdef1 .= "$def\t" . colorize($seq) . "\n" if $type ne "none";
+		}
+		elsif ($def =~ /3_con/) {
+			$printdef3 .= "$def\t" . colorize($seq, "NA", $reverse) . "\n";
+		}
+		else {
+			$print{$def} .= "$def\t" . colorize($seq, "NA", $reverse) . "\n";
+		}
+#		print "\n";
+#		print $printhead;
+		$print{head} = $printhead;
+		if ($type eq "none") {
+			$print{$def3name} = $printdef3;
+			$print{$def1name} = $printdef1;
+#			print $printdef3;
+#			print $printdef1;
+#			print $printdef2;
+		}
+		else {
+			$print{$def3name} = $printdef3;
+			$print{$def1name} = $printdef1;
+#			print $printdef1;
+#			print $printdef3;
+#			print $printdef2;
+		}
+	}
+	undef $def;
+	undef $seq;
+
+	$reverseprint = defined $reverse ? $reverse : "rev undef";
+	if ($type eq "none") {
+#		print "type is none! reverse is $reverseprint\n";
+#		return;
+	}
+#	die "aaa\n" if $type eq "none";
+	my $defind = 0;
+	foreach my $def1 (sort keys %seq) {
+		next if $def1 !~ /$leader/;
+		foreach my $def2 (sort keys %seq) {
+			next if $def1 eq $def2;
+			@{$mut{$def2}} = @mut;
+			#print "def1 = $def1, def2=$def2\n" if defined $namewant;
+			my $seqz1 = $seq{$def1}; 
+			my $seqz2 = $seq{$def2};
+			if (defined $reverse) {
+				$seqz1 = mitochy::revcomp($seqz1);
+				$seqz2 = mitochy::revcomp($seqz2);
+			}
+			$seqz1 =~ s/([ACGTN])[\-]+$/$1/i;
+			$seqz2 =~ s/([ACGTN])[\-]+$/$1/i;
+#			my ($countlen1) = $seq{$def1} =~ tr/ACGTNacgtn/ACGTNacgtn/;
+#			my ($countlen2) = $seq{$def2} =~ tr/ACGTNacgtn/ACGTNacgtn/;
+			my @seq1 = split("", $seqz1);
+			my @seq2 = split("", $seqz2);
+			my $shortest = @seq1 < @seq2 ? @seq1 : @seq2;
+			my ($mat, $mis, $ins, $del, $mh, $currmat, $maxmat, $len1, $len2) = (0,0,0,0,0,0,0,0,0);
+			my $prev = "NA";
+         my $maxpos = 0;
+         my $currpos = "NA";
+			my $currins = "";
+			my $currdel = "";
+         my $ind1 = 0;
+         my $ind2 = 0;
+			my %type2;
+			my $print3 = $whitespace . "\t";
+			my $prevlenindels = 0;
+			for (my $i = 0; $i < $shortest; $i++) {
+				my $seqchunk1 = $seq1[$i]; 
+				my $seqchunk2 = $seq2[$i]; 
+				$len2 ++ if $seqchunk2 ne "-" and $seqchunk2 ne "x";
+				$len1 ++ if $seqchunk1 ne "-" and $seqchunk1 ne "x";
+            $ind1 ++ if $seqchunk1 ne "-" and $seqchunk1 ne "x";
+            $ind2 ++ if $seqchunk2 ne "-" and $seqchunk2 ne "x";
+				
+				if ( defined $namewant) {
+					if ($beg0 != -1 and $end0 != -1 and $ind1 >= $beg0 and $ind1 <= $end0) {
+						$print3 .= colorize($seqchunk2);
+					# "$type: beg0=$beg0, end0 = $end0, ind1=$ind1\n";
+					}
+					else {
+						$print3 .= " ";
+					}
+				}
+
+				my $mhseq = "";
+				if ($mhbeg ne 0 and $ind1 >= $mhbeg and $ind1 <= $mhend) {
+					$mut{$def2}[$i] = "H";
+					$mhseq .= $seqchunk1;
+#					print "ind=$ind1, i=$i, mut $def2 [$i] = H\n";
+					if ($ind1 == $mhend and $type eq "none" and $def2 =~ /3_con/) {
+						$type{mh}{$mhseq} ++;
+						push(@{$type2{mhpos}{$mhseq}}, $mhbeg);
+					}
+				}
+
+				if (($ind1 >= $beg0 or $beg0 eq -1) and ($ind1 <= $end0 or $end0 eq -1)) {
+					#next if $type eq "none" and $def2 =~ /3_neg/ and $ind1 <= $junc;
+					#next if $type eq "none" and $def2 =~ /2_neg/ and $ind1 > $junc;
+					if ($def2 =~ /3_con/ and $type eq "none") {
+						$type{nuc}{$seqchunk2} ++;
+						$type{tot}{tot} ++;
+					}
+					if ($seqchunk1 eq $seqchunk2 and $seqchunk1 eq "-") {
+						$mut{$def2}[$i] = " ";
+					}
+					elsif ($seqchunk1 eq $seqchunk2 and $seqchunk1 ne "-") {
+						if ($mut{$def2}[$i] ne "H") {
+							$mut{$def2}[$i] = "|";
+							$mat ++;
+							my $nuc2nuc1 = "$seqchunk2\_$seqchunk1";
+							if ($def2 =~ /3_con/) {
+								$type{mat}{$nuc2nuc1} ++;
+							}
+							my $matpos = $ind1 - $junc;
+							push(@{$type2{matpos}{$nuc2nuc1}}, $matpos);
+						}
+						else {
+							$mh ++;
+							my $nuc2nuc1 = "$seqchunk2\_$seqchunk1";
+#							if ($def2 =~ /3_con/) {
+#								$type{mh}{$nuc2nuc1} ++;
+#							}
+#							my $mhpos = $ind1 - $junc;
+#							push(@{$type2{mhpos}{$nuc2nuc1}}, $mhpos);
+						}
+						if ($currpos ne "NA" and $prevlenindels > 0 and $prevlenindels <= 5) {
+#							print "0 mis. prevlenindels = $prevlenindels, i = $i, maxpos = $maxpos, maxmat = $maxmat, currpos = $currpos, currmat = $currmat\n" if defined $namewant;
+							$currmat += $prevlenindels;
+							#$maxmat += $currmat;
+#							$currpos = $ind1;
+						}
+	#					$currmat = 1 if $prev ne "mat" and $prev ne "mis";
+	  					$currmat ++;
+						$currpos = $ind1 if $currpos eq "NA";
+	#               if ($prev eq "mat" or $prev eq "mis") {
+	#   					$currmat ++;
+	#                  $currpos = $ind1 - 1 if $currpos eq "NA";
+	#               }
+						$prevlenindels = 0;
+						$prev = "mat";
+					}
+					elsif ($seqchunk1 ne $seqchunk2 and $seqchunk1 ne "-" and $seqchunk2 ne "-") {
+						$mis ++;
+						if (defined $mut{$def2}[$i]) {
+							$mut{$def2}[$i] = "m";
+						}
+						my $nuc2nuc1 = "$seqchunk2\_$seqchunk1";
+						if ($def2 =~ /3_con/) {
+							$type{mis}{$nuc2nuc1} ++;
+						}
+						my $mispos = $ind1 - $junc;
+						push(@{$type2{mispos}{$nuc2nuc1}}, $mispos);
+	#					$currmat = 1 if $prev ne "mat" and $prev ne "mis";
+	#               if ($prev eq "mat" or $prev eq "mis") {
+						if ($currpos ne "NA" and $prevlenindels > 0 and $prevlenindels <= 5) {
+#							print "0 mis. prevlenindels = $prevlenindels, i = $i, maxpos = $maxpos, maxmat = $maxmat, currpos = $currpos, currmat = $currmat\n" if defined $namewant;
+							$currmat += $prevlenindels;
+							#$maxmat += $currmat;
+#							$currpos = $ind1;
+						}
+	  					$currmat ++;
+						$currpos = $ind1 if $currpos eq "NA";
+						$prevlenindels = 0;
+						$prev = "mis";
+					}
+					elsif ($currpos ne "NA") {
+						if ($prevlenindels > 5) {
+#							print "1. prevlenindels = $prevlenindels, i = $i, maxpos = $maxpos, maxmat = $maxmat, currpos = $currpos, currmat = $currmat\n" if defined $namewant;
+	   	            $maxpos = $currpos if $maxmat < $currmat;
+							$maxmat = $currmat if $maxmat < $currmat;
+	   	            $currmat = 1;
+	   	            $currpos = "NA";
+							$prevlenindels = 0;
+						}
+					}
+					if ($seqchunk1 eq "-" and $seqchunk2 ne "-") {
+						$del ++;
+#					print "ind1 = $ind1, beg0=$beg0, end0=$end0, del=$seqchunk2, currdel = $currdel\n";
+						$currdel .= $seqchunk2;
+						$prevlenindels ++ if $prev eq "mat" or $prev eq "mis" or $prevlenindels > 0;
+						$prev = "del";
+						if (defined $mut{$def2}[$i]) {
+							if ($mut{$def2}[$i] eq "I") {$mut{$def2}[$i] = "B";} else {$mut{$def2}[$i] = "D"};
+						}
+					}
+					elsif ($currdel ne "") {
+#						if (length($currdel) < 20) {
+							my $delpos = $ind1 - $junc;
+							push(@{$type2{delpos}{$currdel}}, $delpos);
+							if ($def2 =~ /3_con/) {
+								$type{del}{$currdel} ++;
+							}
+#						}
+#						print "INS: $currdel $type{del}{$currdel}\n";
+						$currdel = "";
+					}
+					if ($seqchunk1 ne "-" and $seqchunk2 eq "-") {
+						$ins ++;
+#					print "ind1 = $ind1, beg0=$beg0, end0=$end0, ins=$seqchunk2, currins = $currins\n";
+						$currins .= $seqchunk1;
+						$prevlenindels ++ if $prev eq "mat" or $prev eq "mis" or $prevlenindels > 0;
+						$prev = "ins";
+						if (defined $mut{$def2}[$i]) {
+							if ($mut{$def2}[$i] eq "D") {$mut{$def2}[$i] = "B";} else {$mut{$def2}[$i] = "I"};
+						}
+					}
+					elsif ($currins ne "") {
+#						if (length($currins) < 20) {
+							my $inspos = $ind1 - $junc;
+							push(@{$type2{inspos}{$currins}}, $inspos);
+							if ($def2 =~ /3_con/) {
+								$type{ins}{$currins} ++;
+							}
+#						}
+#						print "DEL: $currins $type{ins}{$currins}\n";
+						$currins = "";
+					}
+				}
+				if ($i >= 0 and $ind1 <= $junc and $def2 =~ /3_neg/ and $type eq "none" ) {
+					$mut{$def2}[$i] = " " if $mut{$def2}[$i] !~ /^[\|H]$/;
+					if ($i == 0 and $def2 =~ /3_neg/ and $type eq "none") {
+						$mut{$def2}[$i] = "$GN" . $mut{$def2}[$i];
+					}
+					if ($ind1 == $junc and $def2 =~ /3_neg/ and $type eq "none") {
+						$mut{$def2}[$i] = $mut{$def2}[$i] . "$N";
+					}
+				}
+				if ($ind1 >= $junc+1 and $i <= @{$mut{$def2}} and $def2 =~ /2_neg/ and $type eq "none") {
+					$mut{$def2}[$i] = " " if $mut{$def2}[$i] !~ /^[\|H]$/;
+					if ($ind1 == $junc+1 and $def2 =~ /2_neg/ and $type eq "none") {
+						$mut{$def2}[$i] = "$GN" . $mut{$def2}[$i];
+					}
+					if ($i == @{$mut{$def2}} and $def2 =~ /2_neg/ and $type eq "none") {
+						$mut{$def2}[$i] = $mut{$def2}[$i] . $N;
+					}
+				}
+			}
+			if ($type eq "none") {
+				$mut{$def2}[$shortest-1] = "F";
+				my $printdef4 = "";
+#				if ($def2 =~ /3_con/) {
+#					for (my
+#				}
+				$printdef4 .= $whitespace . "\t" . join("", @{$mut{$def2}}) . "\n";
+				$print{$def2} = $print{$def2} . $printdef4 if $def2 =~ /2_neg/;
+				$print{$def2} = $printdef4 . $print{$def2} if $def2 =~ /3_neg/;
+				$print{$def2} = $print{$def2} . $printdef4 if $def2 =~ /3_con/;
+#				print "vs $def2\n$printdef4\nMH=$mhbeg-$mhend\n";
+#				for (my $z = 0; $z < @{$mut{$def2}}; $z++) {
+#					print "$z: $mut{$def2}[$z]\n" if $mut{$def2}[$z] ne " ";
+#				}
+			}
+			if ($currpos ne "NA") {
+				print "2. maxpos = $maxpos, maxmat = $maxmat, currpos = $currpos, currmat = $currmat\n" if defined $namewant;
+				$maxpos = $currpos if $maxmat < $currmat;
+				$maxmat = $currmat if $maxmat < $currmat;
+	         $currmat = 1;
+	         $currpos = "NA";
+			}
+			if ($currdel ne "") {
+#				if (length($currdel) < 20) {
+					my $delpos = $ind1 - $junc;
+					push(@{$type2{delpos}{$currdel}}, $delpos);
+					if ($def2 =~ /3_con/) {
+						$type{del}{$currdel} ++;
+					}
+#				}
+#				print "INS: $currdel $type{del}{$currdel}\n";
+				$currdel = "";
+			}
+			if ($currins ne "") {
+#				if (length($currins) < 20) {
+					my $inspos = $ind1 - $junc;
+					push(@{$type2{inspos}{$currins}}, $inspos);
+					if ($def2 =~ /3_con/) {
+						$type{ins}{$currins} ++;
+					}
+#				}
+#				print "DEL: $currins $type{ins}{$currins}\n";
+				$currins = "";
+			}
+			foreach my $type1 (sort keys %type2) {
+				foreach my $type2 (sort keys %{$type2{$type1}}) {
+					my $mean = int(100*mitochy::mean(@{$type2{$type1}{$type2}}))/100;
+					my $sd = int(mitochy::sd(@{$type2{$type1}{$type2}}))/100;
+					if ($def2 =~ /3_con/) {
+						$type{$type1}{$type2} = "$mean,$sd";
+					}
+				}
+			}
+			my $percmaxmat = int(1000*$maxmat/$len2)/10;
+			print $print3 . "\nmaxmat = $maxmat, maxpos = $maxpos, perc = $percmaxmat, final pos =" . ($maxpos + $maxmat) . "\n" if defined $namewant;
+#			print "$def2\tmat=$mat, mis=$mis, del=$del, ins=$ins, max cons pos=$maxpos, match=$maxmat ($percmaxmat \%), len1=$len1, len2=$len2\nbeg0=$beg0, end0=$end0\n";
+			my $wantpos = -1;
+			my $lenz1 = $junc;
+			my $lenz2 = $len1 - $junc;
+			if ($type eq "primer") {
+				$wantpos = $percmaxmat > 80 ? $maxpos + $maxmat : -1;
+				my $primer_pos = $wantpos;
+				my $orig_primer_pos = $primer_pos;
+				$primer_pos = 25 if $primer_pos eq -1;
+				my $beg_pos = $lenz1 - $lenmax1 >= $primer_pos ? $lenz1 - $lenmax1 : $lenz1 >= $primer_pos ? $primer_pos : -99;
+				print "\tprimer_pos = $YW$orig_primer_pos$N (use $primer_pos, junc = $LGN$junc$N, so beg pos = $beg_pos)\n\n" if defined $namewant;
+				return($wantpos, $primer_pos, $beg_pos);
+			}
+			if ($type eq "adapter") {
+				$wantpos = $percmaxmat > 90 ? $maxpos : -1;
+				my $adapter_pos = $wantpos;
+				my $orig_adapter_pos = $adapter_pos;
+				return(-99) if $adapter_pos < $lenz1 and $adapter_pos ne -1;
+				$adapter_pos = $lenz1 + $lenz2 - 25 if $adapter_pos eq -1;
+				$adapter_pos = $lenz1 + $lenz2 - $adapter_pos; #25 or 20
+				my $end_pos = $lenz2 >= $lenmax2 + $adapter_pos ? $lenz1 + $lenmax2 : $lenz2 >= $adapter_pos ? $lenz1 + ($lenz2 - $adapter_pos) : -99;
+				print "\tadapter_pos = $YW$orig_adapter_pos$N (use $adapter_pos, len1=$lenz1, len2=$lenz2, lenmax1=$lenmax1, lenmax2=$lenmax2, junc = $LGN$junc$N, so end pos = $end_pos)$N\n\n" if defined $namewant;
+	#			return($wantpos, ($lenz1 + $lenz2 - $adapter_pos), $end_pos);
+				return($wantpos, ($len1 - $adapter_pos), $end_pos);
+			}
+			if ($type eq "junc") {
+				$wantpos = $percmaxmat > 80 ? $maxpos + $maxmat : -1;
+				return($wantpos);
+			}
+#			if ($type =~ /none/) {
+#				return(\%type);
+#			}
+		}
+	}
+	if ($type =~ /none/) {
+		LOG($outLog, "\n\n","NA");
+		LOG($outLog, "------------------------------------------------\n","NA");
+		LOG($outLog, "1. CONSENSUS (CON) vs. READ (SEQ):\n","NA");
+		LOG($outLog, "------------------------------------------------\n","NA");
+		LOG($outLog, "$print{head}","NA");
+		foreach my $defz (sort keys %print) {
+			if ($defz =~ /3_con/) {
+				my $printz = $print{$defz};
+				$printz =~ s/3_con/  CON/;
+				LOG($outLog, "$printz","NA");
+			}
+		}
+		foreach my $defz (sort keys %print) {
+			if ($defz =~ /1_neg/) {
+				my $printz = $print{$defz};
+				$printz =~ s/1_neg/  SEQ/;
+				LOG($outLog, "$printz","NA");
+			}
+		}
+		LOG($outLog, "\n\n","NA");
+		LOG($outLog, "------------------------------------------------\n","NA");
+		LOG($outLog, "2. IgM BAIT (IgM) vs. READ (SEQ) vs FAR JOINED (FAR):\n","NA");
+		LOG($outLog, "------------------------------------------------\n","NA");
+		LOG($outLog, "$print{head}","NA");
+		foreach my $defz (sort keys %print) {
+			if ($defz =~ /2_neg/) {
+				my $printz = $print{$defz};
+				$printz =~ s/2_neg/  IgM/;
+				LOG($outLog, "$printz","NA");
+			}
+		}
+		foreach my $defz (sort keys %print) {
+			if ($defz =~ /1_neg/) {
+				my $printz = $print{$defz};
+				$printz =~ s/1_neg/  SEQ/;
+				LOG($outLog, "$printz","NA");
+			}
+		}
+		foreach my $defz (sort keys %print) {
+			if ($defz =~ /3_neg/) {
+				my $printz = $print{$defz};
+				$printz =~ s/3_neg/  FAR/;
+				LOG($outLog, "$printz","NA");
+			}
+		}
+		LOG($outLog, "\n\n","NA");
+		LOG($outLog, "------------------------------------------------\n","NA");
+		LOG($outLog, "\n","NA");
+	}
+	return(\%type);
+}
+
+sub blank_if_undef {
+	my @strings = @_;
+	for (my $i = 0; $i < @strings; $i++) {
+		$strings[$i] = "" if not defined $strings[$i];
+	}
+	return(@strings);
+}
+
+sub get_mh {
+	my ($name, $seqQ1L, $seqQ1R, $seqC1L, $seqC1R, $seqC2L, $seqC2R, $junc) = @_;
+
+	#seqC1LL	seqC1LR	seqC1RL	seqC1RR
+	#seqQ1LL	seqQ1LR	seqQ1RL	seqQ1RR
+	#seqC2LL	seqC2LR	seqC2RL	seqC2RR
+
+	my ($seqC1LL, $seqC1LR, $seqC1RL, $seqC1RR, 
+		 $seqQ1LL, $seqQ1LR, $seqQ1RL, $seqQ1RR, 
+		 $seqC2LL, $seqC2LR, $seqC2RL, $seqC2RR);
+
+	($seqC1LL, $seqC1LR) = $seqC1L =~ /^(.*)(.{20})$/;
+	($seqQ1LL, $seqQ1LR) = $seqQ1L =~ /^(.*)(.{20})$/;
+	($seqC2LL, $seqC2LR) = $seqC2L =~ /^(.*)(.{20})$/;
+
+	($seqC1RL, $seqC1RR) = $seqC1R =~ /^(.{20})(.*)$/;
+	($seqQ1RL, $seqQ1RR) = $seqQ1R =~ /^(.{20})(.*)$/;
+	($seqC2RL, $seqC2RR) = $seqC2R =~ /^(.{20})(.*)$/;
+
+	($seqC1LL, $seqC1LR, $seqC1RL, $seqC1RR, 
+		 $seqQ1LL, $seqQ1LR, $seqQ1RL, $seqQ1RR, 
+		 $seqC2LL, $seqC2LR, $seqC2RL, $seqC2RR) = 
+	blank_if_undef($seqC1LL, $seqC1LR, $seqC1RL, $seqC1RR, 
+		 $seqQ1LL, $seqQ1LR, $seqQ1RL, $seqQ1RR, 
+		 $seqC2LL, $seqC2LR, $seqC2RL, $seqC2RR);
+
+
+	my @seqQ1LR = split("", $seqQ1LR);
+	my @seqQ1RL = split("", $seqQ1RL);
+	my @seqC1LR = split("", $seqC1LR);
+	my @seqC1RL = split("", $seqC1RL);
+	my @seqC2LR = split("", $seqC2LR);
+	my @seqC2RL = split("", $seqC2RL);
+	
+	my ($mhtot, $mhbeg, $mhend, $mhL, $mhR, $lastmat, $printmat) = (0, -1, -1, -1, -1, 0, "");
+
+
+	#seqC1LL	[seqC1LR]	seqC1RL	seqC1RR
+	#seqQ1LL	[seqQ1LR]	seqQ1RL	seqQ1RR
+	#seqC2LL	[seqC2LR]	seqC2RL	seqC2RR
+
+
+	# find beg of microhomology chunk.
+	# starts from junction of seqQ1 (seqQ1LR) to the left
+	my $ind = 0;
+	for (my $i = @seqQ1LR - 1; $i >= 0; $i --) {
+		# if it matches exactly at junction break then flag as match (lastmat = 1)
+		$lastmat = 1 if $i == @seqQ1LR - 1 and $seqQ1LR[$i] eq $seqC1LR[$i] and $seqQ1LR[$i] eq $seqC2LR[$i];
+
+		# if match and prev is also match (lastmat == 1) then add to microhomology
+		if ($lastmat == 1 and $seqQ1LR[$i] eq $seqC1LR[$i] and $seqQ1LR[$i] eq $seqC2LR[$i]) {
+			$mhtot ++;
+			$printmat = $seqQ1LR[$i] . $printmat;
+			$mhbeg = $i;
+			$mhend = $i;
+			$mhL = $ind; #how many bp left of junction mhbeg is
+		}
+		else { #otherwise mh stops there
+			$printmat = "-" . $printmat;
+			$lastmat = 0;
+		}
+		$ind ++;
+	}
+	$printmat .= ";"; #debug
+
+	#seqC1LL	seqC1LR	[seqC1RL]	seqC1RR
+	#seqQ1LL	seqQ1LR J	[seqQ1RL]	seqQ1RR
+	#seqC2LL	seqC2LR	[seqC2RL]	seqC2RR
+
+	# find end of microhomology chunk
+	# starts from junction of seqQ1 (seqQ1RL at 0) to the right
+	$lastmat = 0;
+	for (my $i = 0; $i < @seqQ1RL; $i ++) {
+		# if it matches right at junction break, then flag as match
+		$lastmat = 1 if $i == 0 and $seqQ1RL[$i] eq $seqC1RL[$i] and $seqQ1RL[$i] eq $seqC2RL[$i];
+
+		# if match and prev is also match (lastmat == 1) then add to microhomology
+		if ($seqQ1RL[$i] eq $seqC1RL[$i] and $lastmat eq 1) {
+			$mhtot ++;
+			$mhbeg = $i + $junc if $mhbeg eq -1;
+			$mhend = $i + $junc;
+			$mhR = $i; #how many bp right of junction mhend is
+			$printmat = $printmat . "$seqQ1RL[$i]";
+		}
+		else { #otherwise stop here
+			$printmat = $printmat . "-";
+			$lastmat = 0;
+		}
+	}
+	
+	#for printing purposes
+	my $longest = length($seqC1LL);
+	$longest = length($seqQ1LL) if $longest < length($seqQ1LL);
+	$longest = length($seqC2LL) if $longest < length($seqC2LL);
+	my ($seqC1LLspace, $seqQ1LLspace, $seqC2LLspace) = ("", "", "");
+	if (length($seqC1LL) < $longest) {
+		$seqC1LLspace = join("", (" ") x ($longest - length($seqC1LL)));
+	}
+	if (length($seqQ1LL) < $longest) {
+		$seqQ1LLspace = join("", (" ") x ($longest - length($seqQ1LL)));
+	}
+	if (length($seqC2LL) < $longest) {
+		$seqC2LLspace = join("", (" ") x ($longest - length($seqC2LL)));
+	}
+	my $printmhdebug = "";
+	$printmhdebug .= "\n";
+	$printmhdebug .= join("", (" ") x length("1_con_$name")) . "\t" . join("", (" ") x $longest) . ";" . $printmat . ";" . "\n";
+	$printmhdebug .= "1_con_$name\t" . $seqC1LLspace . $seqC1LL . "" . colorize($seqC1LR) . ";" . colorize($seqC1RL) . "" . $seqC1RR . "\n";
+	$printmhdebug .= "1_seq_$name\t" . $seqQ1LLspace . $seqQ1LL . "" . colorize($seqQ1LR) . ";" . colorize($seqQ1RL) . "" . $seqQ1RR . "\n";
+	$printmhdebug .= "2_con_$name\t" . $seqC2LLspace . $seqC2LL . "" . colorize($seqC2LR) . ";" . colorize($seqC2RL) . "" . $seqC2RR . "\n";
+	######### printing purposes end
+
+	$printmhdebug .= "mhL = $mhL, mhR = $mhR\n";
+
+	my %mh;
+	$mh{seqC1LL} = $mhL eq -1 ? $seqC1LL . $seqC1LR : $seqC1LL . join("", @seqC1LR[0..(@seqC1LR-1-($mhL+1))]);
+	$mh{seqC1LR} = $mhL eq -1 ? ""                  : join("", @seqC1LR[(@seqC1LR-1-$mhL)..(@seqC1LR-1)]);
+	$mh{seqC1RL} = $mhR eq -1 ? ""                  : join("", @seqC1RL[0..$mhR]);
+	$mh{seqC1RR} = $mhR eq -1 ? $seqC1RL . $seqC1RR : join("", @seqC1RL[($mhR+1)..(@seqC1RL-1)]) . $seqC1RR;
+	$mh{seqQ1LL} = $mhL eq -1 ? $seqQ1LL . $seqQ1LR : $seqQ1LL . join("", @seqQ1LR[0..(@seqQ1LR-1-($mhL+1))]);
+	$mh{seqQ1LR} = $mhL eq -1 ? ""                  : join("", @seqQ1LR[(@seqQ1LR-1-$mhL)..(@seqQ1LR-1)]);
+	$mh{seqQ1RL} = $mhR eq -1 ? ""                  : join("", @seqQ1RL[0..$mhR]);
+	$mh{seqQ1RR} = $mhR eq -1 ? $seqQ1RL . $seqQ1RR : join("", @seqQ1RL[($mhR+1)..(@seqQ1RL-1)]) . $seqQ1RR;
+	$mh{seqC2LL} = $mhL eq -1 ? $seqC2LL . $seqC2LR : $seqC2LL . join("", @seqC2LR[0..(@seqC2LR-1-($mhL+1))]);
+	$mh{seqC2LR} = $mhL eq -1 ? ""                  : join("", @seqC2LR[(@seqC2LR-1-$mhL)..(@seqC2LR-1)]);
+	$mh{seqC2RL} = $mhR eq -1 ? ""                  : join("", @seqC2RL[0..$mhR]);
+	$mh{seqC2RR} = $mhR eq -1 ? $seqC2RL . $seqC2RR : join("", @seqC2RL[($mhR+1)..(@seqC2RL-1)]) . $seqC2RR;
+
+	$printmhdebug .= "1_con_$name\t$seqC1LLspace$mh{seqC1LL}" . colorize($mh{seqC1LR}) . ";" . colorize($mh{seqC1RL}) . "$mh{seqC1RR}$N\n";
+	$printmhdebug .= "1_seq_$name\t$seqQ1LLspace$mh{seqQ1LL}" . colorize($mh{seqQ1LR}) . ";" . colorize($mh{seqQ1RL}) . "$mh{seqQ1RR}$N\n";
+	$printmhdebug .= "2_con_$name\t$seqC2LLspace$mh{seqC2LL}" . colorize($mh{seqC2LR}) . ";" . colorize($mh{seqC2RL}) . "$mh{seqC2RR}$N\n";
+	my $Xbuffer = join("", ("XVWXY") x 3);
+	my $cmdL = ">1_con\n$mh{seqC1LL}$Xbuffer\n>1_seq\n$mh{seqQ1LL}$Xbuffer\n>2_con\n$mh{seqC2LL}$Xbuffer\n";
+	my $cmdR = ">1_con\n$Xbuffer$mh{seqC1RR}\n>1_seq\n$Xbuffer$mh{seqQ1RR}\n>2_con\n$Xbuffer$mh{seqC2RR}\n";
+
+	my @resL = `echo '$cmdL' | muscle $muscleparam 2>/dev/null`;
+	my @resR = `echo '$cmdR' | muscle $muscleparam 2>/dev/null`;
+	my $resHASH;
+	$resHASH = parse_fasta(\@resL, $resHASH, "L", $Xbuffer);
+	$resHASH = parse_fasta(\@resR, $resHASH, "R", $Xbuffer);
+	$mh{'1_con'} = $resHASH->{'1_con'}{L} . $mh{seqC1LR} . $mh{seqC1RL} . $resHASH->{'1_con'}{R};
+	$mh{'1_seq'} = $resHASH->{'1_seq'}{L} . $mh{seqC1LR} . $mh{seqC1RL} . $resHASH->{'1_seq'}{R};
+	$mh{'2_con'} = $resHASH->{'2_con'}{L} . $mh{seqC1LR} . $mh{seqC1RL} . $resHASH->{'2_con'}{R};
+	$mh{'3_con'} = $resHASH->{'1_con'}{L} . $mh{seqC1LR} . $mh{seqC1RL} . $resHASH->{'2_con'}{R};
+
+	print "\ncmdL:\n" . $cmdL . "\n\n" if $name eq "M02034:489:000000000-CYYL8:1:1101:7360:4607";
+	print "\ncmdR:\n" . $cmdR . "\n\n" if $name eq "M02034:489:000000000-CYYL8:1:1101:7360:4607";
+	print "\nresL:\n" . join("", @resL) . "\n\n" if $name eq "M02034:489:000000000-CYYL8:1:1101:7360:4607";
+	print "\nresR:\n" . join("", @resR) . "\n\n" if $name eq "M02034:489:000000000-CYYL8:1:1101:7360:4607";
+
+	$printmhdebug .= "\n\n";
+	$printmhdebug .= "1_con_$name\t" . colorize($mh{'1_con'}) . "\n";
+	$printmhdebug .= "1_seq_$name\t" . colorize($mh{'1_seq'}) . "\n";
+	$printmhdebug .= "2_con_$name\t" . colorize($mh{'2_con'}) . "\n";
+	print "$printmhdebug\n" if $name eq "M02034:489:000000000-CYYL8:1:1101:7360:4607"; #if defined $namewant;
+	return($mhtot, $mhbeg+1, $mhend+1, \%mh);
+	#seqC1LL			seqC1LR			seqC1RL	seqC1RR
+	#seqC2LL	seqC2LR	seqC2RL			seqC2RR
+}
+#print "MH = $mhtot ($mhbeg-$mhend)\n";
+
+
+sub parse_fasta {
+	my ($reses, $resHASH, $restype, $Xbuffer) = @_;
+	my @res = @{$reses};
+	my $def;
+	my %res;
+	for (my $i = 0; $i < @res; $i ++) {
+		my $line = $res[$i];
+		chomp($line);
+		if ($line =~ /^>/) {
+			$def = $line;
+			$def =~ s/^>//;
+			$res{$def} = "";
+		}
+		else {
+			$res{$def} .= $line;
+		}
+	}
+#	print "\n\n";
+	foreach my $def (sort keys %res) {
+#		print "$def\n" . colorize($res{$def}) . "\n";
+		$res{$def} =~ s/$Xbuffer//g;# if $res{$def} =~ /X$/;
+		$res{$def} =~ s/$Xbuffer//g;# if $res{$def} =~ /^X/;
+		$res{$def} =~ s/[UVWXYZ]//g;
+		die "def $LCY$def$N has extra X:\n$res{$def}\n\n" if $res{$def} =~ /VWXYZ/;
+		$resHASH->{$def}{$restype} = $res{$def};
+	}
+#	print "\n\n";
+	return($resHASH);
+}
+
+
+__END__
+Qname   JuncID  Rname   Junction        Strand  Rstart  Rend    B_Rname B_Rstart        B_Rend  B_Strand        B_Qstart        B_Qend  Qstart  Qend    Qlen    B_Cigar Cigar   Seq     J_Seq      Barcode unaligned       baitonly        uncut   misprimed       freqcut largegap        mapqual breaksite       sequential      repeatseq       duplicate
+M02034:489:000000000-CYYL8:1:1101:16291:1246    1       chr12   114663366       -1      114663157       114663366       chr12   114664820       114664909       -1      7       96      96310      343     90M     34M5I7M1X7M1X35M1X3M1X1M1X2M1X21M1X2M1X14M1X6M1X27M1X4M1X1M1X2M3X14M1X7M1X5M    ACAGTGCACACAAAGACTCTGGACCTCTCCGAAACCAGGCACCGCAAATGGTAAGCCAGAGGCAGCCACAGCTGTGGCTGCTGCTCTTAAAGCTTGCTGAGCTGGGGTGAGCTGGGGTGAGCTGAGCTGAGCTGGGGTGAGATGAGCTGTGCTGGGGTGAGCTGAGCTGGGGTGAGCTGAGCTGATCTGAGCTGGGCTGAGCTGAGCTGAGCTGAGGTGGGCTGGGGTGAGCTGGGCTGAGGTGAGCTGGGGTGAGCTGGGGTGAGCTGGGCTGGGGTGAGCTGAGCTGAGCTGGGGTGAGCTGAGGTGACCACGCGTGCTCTACAACTTTCGTAAGATCGTA     
+
+MUSCLE (3.8) multiple sequence alignment
+
+
+2_neg_M02034:489:000000000-CYYL8      -----------------GTTGGA------GGATATGGGGGA--------GGCGAGCATGA
+
