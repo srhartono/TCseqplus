@@ -1,4 +1,4 @@
-#0. Synopsis
+### 0. Synopsis
 
 Pipeline downloaded from: https://github.com/robinmeyers/transloc_pipeline
 
@@ -8,21 +8,29 @@ TranslocWrapper.pl meta.txt preprocess/ results/
 TranslocFilter.pl results/SL2003D1/SL2003D1.tlx results/SL2003D1/SL2003D1_result.tlx --filters "f.unaligned=1 f.baitonly=1 f.uncut=G10 f.misprimed=L10 f.freqcut=1 f.largegap=G30 f.mapqual=1 f.breaksite=1 f.sequential=1 f.repeatseq=1 f.duplicate=1"
 ```
 
-1. Run TranslocPreprocess.pl which preprocess the fq files
+---
+  
+### 1. Run TranslocPreprocess.pl which preprocess the fq files
 
 TranslocPreprocess.pl <meta.txt> <preprocess output folder> --indir <input folder with fastq files>
 
-2. IIRC TranslocWrapper.pl is the mapping part of the software which will put results in the results/ directory
+---
+  
+### 2. IIRC TranslocWrapper.pl is the mapping part of the software which will put results in the results/ directory
 
 TranslocWrapper.pl <meta.txt> <preprocess output folder from (1)> <results output folder>
 
-3. Then do final filter. Please see TCseq pipeline for more info (https://github.com/robinmeyers/transloc_pipeline)
+---
+  
+### 3. Then do final filter. Please see TCseq pipeline for more info (https://github.com/robinmeyers/transloc_pipeline)
 
 For example, this is for SL2003D1
 
 `TranslocFilter.pl <resulting tlx file from (2)> <filtered tlx output file> --filters "<filters>"`
 
-4. meta.txt (tab delimited):
+---
+  
+### 4. meta.txt (tab delimited):
 
 ```
 Library Assembly    Chr Start   End Strand  MID Primer  Adapter Description
@@ -36,8 +44,10 @@ SL2003W3    mm9 chr12   114664888   114664910   -   ACAGTG  CACACAAAGACTCTGGACCT
 SL2003S3    mm9 chr12   114664888   114664910   -   GCCAAT  CACACAAAGACTCTGGACCTC   CCACGCGTGCTCTACA    Smu_as_bait_site
 SL2003R3    mm9 chr12   114664888   114664910   -   CAGATC  CACACAAAGACTCTGGACCTC   CCACGCGTGCTCTACA    Smu_as_bait_site<run TCseq pipeline until fliter.tlx>
 ```
+
+---
   
-5. To post-process and create figure of % read with mutation, junction distance etc:
+### 5. To post-process and create figure of % read with mutation, junction distance etc:
 
 
 - 1st run Folder: `/group/stella/Work/Data/Fastq/200323_SLIMS0323_BC_mm_TCseq_JackieBarlowTCseq/2_Peak/results`
