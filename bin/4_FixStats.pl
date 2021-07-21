@@ -43,11 +43,14 @@ for (my $i = 0; $i < @inputFiles; $i++) {
 	$inputFiles[$i] =~ s/^\.\///;
 	my ($foldertemp, $inputFilestemp) = getFilename($inputFiles[$i], "folderfull");
 	my ($sampleID) = $inputFilestemp =~ /^([A-Z][0-9])_/;
+	($sampleID) = $inputFilestemp =~ /([A-Z][0-9](cut)?)_result_filter/ if not defined $sampleID;
 	$sampleID = "UNKNOWN" if not defined $sampleID;
 	my ($lenMaxL, $lenMaxR) = $inputFilestemp =~ /^.+.tlx.(\d+)\.(\d+)\.final.tsv.all$/;
 	($lenMaxL) = ("UNKNOWN") if not defined ($lenMaxL);
 	($lenMaxR) = ("UNKNOWN") if not defined ($lenMaxR);
 	$inputFilesPrint .= "\t$LGN$ind$N <inputFolder>/$LCY$inputFilestemp$N (sampleID $LGN$sampleID$N, lenMaxL $LGN$lenMaxL$N, lenMaxR $LGN$lenMaxR$N)\n";
+	die "\n\n$LRD ERROR!!! $N: Cannot parse sampleID ($LGN$sampleID$N) (e.g. W1 or D3) from inputFile $LCY$inputFilestemp$N\n\n" if not defined $sampleID or $sampleID eq "UNKNOWN";
+	#die "SmapleID = $LGN$sampleID$N\n";
 }
 
 # outFile
@@ -189,24 +192,21 @@ foreach my $sampleID (sort keys %data) {
 				}
 				elsif ($def eq "count_total") {
 					my $mean_total  = $total_read eq 0 ? 0 : $val / $total_read;
-					  ($mean_total) = myformat($mean_total);
 					my $mean_perbp_allread  = $total_read eq 0 ? 0 : $average_length eq 0 ? 0 : ($val / $total_read) / $average_length;
-					  ($mean_perbp_allread) = myformat($mean_perbp_allread);
 					push(@defp, $def); #count_total
 					push(@valp, $val); #count_total
 					push(@defp, "mean_total");
-					push(@valp, $mean_total);
+					push(@valp, myformat($mean_total));
 					push(@defp, "mean_perbp_allread");
-					push(@valp, $mean_perbp_allread);
+					push(@valp, myformat($mean_perbp_allread));
 				}
 				elsif ($def eq "percperbp") {
 					$val = $val / 100; #dont use the perc
 					my ($mean_perbp_eachread) = $total_read eq 0 ? 0 : $val / $total_read;
-					$mean_perbp_eachread = myformat($mean_perbp_eachread);
 					push(@defp, "total_perbp_eachread"); #totalperbp_eachread
-					push(@valp, $val); #totalperbp_eachread
+					push(@valp, myformat($val)); #totalperbp_eachread
 					push(@defp, "mean_perbp_eachread");
-					push(@valp, $mean_perbp_eachread);
+					push(@valp, myformat($mean_perbp_eachread));
 				}
 				else {
 					if ($val =~ /^\-?\d+\.?\d*$/) {
@@ -216,10 +216,10 @@ foreach my $sampleID (sort keys %data) {
 					push(@valp, $val);
 				}
 			}
-			if ($ind == 0) {
-				print $out1 join(",", @defp) . "\n";
-				print date() . "Example output:\n\n";
-				print join("\t", @defp) . "\n";
+			if ($ind < 10) {
+				print $out1 join(",", @defp) . "\n" if $ind == 0;
+				print date() . "Example output:\n\n" if $ind == 0;
+				print join("\t", @defp) . "\n" if $ind == 0;
 				print join("\t", @valp) . "\n";
 			}
 			print $out1 join(",", @valp) . "\n";
@@ -244,6 +244,16 @@ sub myformat {
 	$val = $val == 0 ? 0 : $val > 10 ? int(10*$val+0.5)/10 : $val > 1 ? int(10*$val+0.5)/10 : $val > 0.001 ? int(10000*$val+0.5)/10000 : $val;
 	if ($val =~ /^\-?0\.0+[1-9]\d*$/) {
 		my ($val2) = $val =~ /^(\-?0\.0+[1-9]\d?)\d*$/;
+		print "Can't reformat val ($val) into val2\n" if not defined $val2;
+		$val = $val2 if defined $val2;
+	}
+	if ($val =~ /^\-?\d+\.?\d*e\-?\d+\.?\d*$/) {
+		my ($val2, $val3) = $val =~ /^(\-?\d+\.?\d?\d?)\d*(e.+)$/;
+		print "Can't reformat val ($val) into val2\n" if not defined $val2;
+		$val = $val2 . $val3 if defined $val2 and defined $val3;
+	}
+	if ($val =~ /^\-?[1-9]\d*\.[1-9]\d*$/) {
+		my ($val2) = $val =~ /^(.+\.\d\d?)\d*$/;
 		print "Can't reformat val ($val) into val2\n" if not defined $val2;
 		$val = $val2 if defined $val2;
 	}

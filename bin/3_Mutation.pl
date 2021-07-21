@@ -286,6 +286,7 @@ foreach my $name (sort {$DATA->{$a}{order} <=> $DATA->{$b}{order}} keys %{$DATA}
 	my @mhseq = split("", $mhseq);
 	my $seqTR = $DATA->{$name}{seqTR};
 
+
 	if ($DATA->{$name}{gap} > 0) {
 		my ($seqTNL, $seqTNG, $seqTNR) = $seqTN =~ /^(.{$DATA->{$name}{endT1}})(.{$DATA->{$name}{gap}})(.*)$/;
 #		my ($bcjunk, $seqTNL, $seqTNG, $seqTNR) = $seqTN =~ /^(.{$DATA->{$name}{begT1}})(.{$DATA->{$name}{endT1}})(.{$DATA->{$name}{gap}})(.*)$/;
@@ -495,7 +496,8 @@ foreach my $name (sort {$DATA->{$a}{order} <=> $DATA->{$b}{order}} keys %{$DATA}
 	($DATA->{$name}) = parse_fasta_simple($DATA->{$name}, \@cmdTN);
 	my $resjun1 = ">1_neg_$name\n$DATA->{$name}{'seqTN_aln'}\n>0_JUN_$name\n$DATA->{$name}{'seqJN_aln'}";
 	my @resjun1 = split("\n", $resjun1);
-	my ($junc, $begdash, $dashes) = parse_aln(\@resjun1, "1_", "junc", undef, 1, $lenMaxL, $lenMaxR, $name, $outBigLog, $outLog, $namewant);
+	my ($junc, $begdash, $dashes) = parse_aln(\@resjun1, "1_", "junc", undef, 1, $lenMaxL, $lenMaxR, $name, $DATA->{$name}{gap}, $outBigLog, $outLog, $namewant);
+
 	my $orig_junc = $junc;
 	$junc -= 1;
 	my $orig_junc_min1 = $junc;
@@ -536,9 +538,9 @@ foreach my $name (sort {$DATA->{$a}{order} <=> $DATA->{$b}{order}} keys %{$DATA}
 
 	my $primer_TN_aln = $DATA->{$name}{'seqTN_aln'};
 	my ($newjunc) = fix_pos($junc, $orig_TN_aln, $primer_TN_aln);
-	($primer_pos, $primer_pos_fix, $beg_pos, $begdash, $dashes) = parse_aln(\@respri1, "1_", "primer,-1,-1,$newjunc", undef, 1, $lenMaxL, $lenMaxR, $name, $outBigLog, $outLog, $namewant);
+	($primer_pos, $primer_pos_fix, $beg_pos, $begdash, $dashes) = parse_aln(\@respri1, "1_", "primer,-1,-1,$newjunc", undef, 1, $lenMaxL, $lenMaxR, $name, $DATA->{$name}{gap}, $outBigLog, $outLog, $namewant);
 	LOG($outBigLog, "primer begdash=$begdash, dashes=$dashes\n"); #if $name eq $namewant;
-	
+
 	($primer_pos) = fix_pos($primer_pos, $primer_TN_aln, $orig_TN_aln);
 	($primer_pos_fix) = fix_pos($primer_pos_fix, $primer_TN_aln, $orig_TN_aln);
 	($beg_pos) = fix_pos($beg_pos, $primer_TN_aln, $orig_TN_aln);
@@ -556,7 +558,7 @@ foreach my $name (sort {$DATA->{$a}{order} <=> $DATA->{$b}{order}} keys %{$DATA}
 		$DATA->{$name}{seqAD_aln} = join("", ("-") x $adapter_pos) . $seqADP . join("", ("-") x (length($orig_TN_aln) - $adapter_pos - length($seqADP)));
 		$resadp1 = ">1_neg_$name\n$orig_TN_aln\n>0_ADP_$name\n$DATA->{$name}{'seqAD_aln'}";
 		@resadp1 = split("\n", $resadp1);
-		($adapter_pos, $adapter_pos_fix, $end_pos, $begdash, $dashes) = parse_aln(\@resadp1, "1_", "adapter,-1,-1,$junc", undef, 1, $lenMaxL, $lenMaxR, $name, $outBigLog, $outLog, $namewant);
+		($adapter_pos, $adapter_pos_fix, $end_pos, $begdash, $dashes) = parse_aln(\@resadp1, "1_", "adapter,-1,-1,$junc", undef, 1, $lenMaxL, $lenMaxR, $name, $DATA->{$name}{gap}, $outBigLog, $outLog, $namewant);
 		LOG($outBigLog, "1. endpos=$end_pos, adapter begdash=$begdash, dashes=$dashes\n"); #if $name eq $namewant;
 		$adapter_TN_aln = $orig_TN_aln;
 	}
@@ -590,7 +592,7 @@ foreach my $name (sort {$DATA->{$a}{order} <=> $DATA->{$b}{order}} keys %{$DATA}
 
 		$adapter_TN_aln = $DATA->{$name}{'seqTN_aln'};
 		my ($newjunc) = fix_pos($junc, $orig_TN_aln, $adapter_TN_aln);
-		($adapter_pos, $adapter_pos_fix, $end_pos, $begdash, $dashes) = parse_aln(\@resadp1, "1_", "adapter,-1,-1,$newjunc", undef, 1, $lenMaxL, $lenMaxR, $name, $outBigLog, $outLog, $namewant);
+		($adapter_pos, $adapter_pos_fix, $end_pos, $begdash, $dashes) = parse_aln(\@resadp1, "1_", "adapter,-1,-1,$newjunc", undef, 1, $lenMaxL, $lenMaxR, $name, $DATA->{$name}{gap}, $outBigLog, $outLog, $namewant);
 		my $orig_end_pos = $end_pos;
 		($adapter_pos) = fix_pos($adapter_pos, $adapter_TN_aln, $orig_TN_aln);
 		($adapter_pos_fix) = fix_pos($adapter_pos_fix, $adapter_TN_aln, $orig_TN_aln);
@@ -650,7 +652,9 @@ foreach my $name (sort {$DATA->{$a}{order} <=> $DATA->{$b}{order}} keys %{$DATA}
 	$unaligned_print .= "FAR PREY   :\t      ------" . $seqC2L . colorize($DATA->{$name}{seqC2R}) . "\n\n";
 	$unaligned_print .= "READ1 SEQ  :\t      " . colorize($seqQ1) . "\n";
 	$unaligned_print .= "TLX SEQ    :\t      " . colorize($DATA->{$name}{seqTN}) . "\n";
-	$unaligned_print .= "READ2 SEQ  :\t      " . join("", (" ") x (length($DATA->{$name}{seqTN}) - length($seqQ2))) . colorize($seqQ2) . "\n\n";
+#	DIELOG($outLog, "Length of seqTN is 0??\nlength seqQ2=" . length($seqQ2) . "\n" . colorize($seqQ2) . "\nlength seqTN=" . length($DATA->{$name}{seqTN}) . "\n" . colorize($DATA->{$name}{seqTN}) . "\n") if length($DATA->{$name}{seqTN}) - length($seqQ2) < 0;
+	my $READSEQ2GAP = length($DATA->{$name}{seqTN}) - length($seqQ2); $READSEQ2GAP = 0 if $READSEQ2GAP < 0;
+	$unaligned_print .= "READ2 SEQ  :\t      " . join("", (" ") x $READSEQ2GAP) . colorize($seqQ2) . "\n\n";
 	$unaligned_print .= "TLX REF    :\t      " . colorize($DATA->{$name}{seqTR}) . "\n";
 	$unaligned_print .= "MH SEQ ALN :\t      " . colorize($DATA->{$name}{mhseqlong}) . "\n";
 	$unaligned_print .= "MH SEQ     :\t      " . colorize($DATA->{$name}{mhseq}) . "\n";
@@ -664,7 +668,7 @@ foreach my $name (sort {$DATA->{$a}{order} <=> $DATA->{$b}{order}} keys %{$DATA}
 
 	my $colorpos1 = $strand1 eq "+" ? "${LGN}$beg1${N}-$end1" : "$beg1-${LGN}$end1${N}";
 	my $colorpos2 = $strand2 eq "+" ? "${LGN}$beg2${N}-$end2" : "$beg2-${LGN}$end2${N}";
-	my ($igtype) = get_igtype($chr2, $beg2, $end2, $strand2, $outBigLog);
+	my ($igtype, $junc1pos, $junc2pos) = get_igtype($DATA->{$name}{junc1pos}, $DATA->{$name}{junc2pos}, $chr2, $beg2, $end2, $strand2, $outBigLog);
 	$DATA->{$name}{igtype} = $igtype;
 #	LOG($outBigLog, "\n\n" . date() . "${LGN}Aligning CONS, BAIT, READ, and PREY sequences!${N}\nIGTYPE=$LRD$igtype${N}, name=${LCY}$name${N}, beg0/junc/end0=$beg_pos/$junc/$end_pos (primer/adapter=$primer_pos/$adapter_pos, fixed=$primer_pos_fix/$adapter_pos_fix), (REF1=$chr1:$colorpos1;length1=$lenz1;junc1=${LGN}$begJ1${N}, REF2=$chr2:$colorpos2;length2=$lenz2;junc2=${LGN}$begJ2${N})\n\n",$NA);
 
@@ -680,7 +684,7 @@ foreach my $name (sort {$DATA->{$a}{order} <=> $DATA->{$b}{order}} keys %{$DATA}
 	my ($muthash, $typehash1, $typehash2);
 	my ($beg_pos2, $end_pos2) = ($beg_pos, $end_pos);
 	my ($beg_fix, $end_fix) = ($beg_pos, $end_pos);
-	($muthash, $typehash1, $beg_pos2, $end_pos2) = parse_aln(\@resTN1, "1_", "none,$beg_pos,$end_pos,$DATA->{$name}{junc},$primer_pos_fix,$adapter_pos_fix,$DATA->{$name}{mhbeg},$DATA->{$name}{mhend}", $muthash, 1, $lenMaxL, $lenMaxR, $name, $outBigLog, $outLog, $namewant);
+	($muthash, $typehash1, $beg_pos2, $end_pos2) = parse_aln(\@resTN1, "1_", "none,$beg_pos,$end_pos,$DATA->{$name}{junc},$primer_pos_fix,$adapter_pos_fix,$DATA->{$name}{mhbeg},$DATA->{$name}{mhend}", $muthash, 1, $lenMaxL, $lenMaxR, $name, $DATA->{$name}{gap}, $outBigLog, $outLog, $namewant);
 	$beg_fix = $beg_pos2 if $beg_fix < $beg_pos2;
 	$end_fix = $end_pos2 if $end_fix > $end_pos2;
 	if ($DATA->{$name}{gap} > 0) {
@@ -696,14 +700,14 @@ foreach my $name (sort {$DATA->{$a}{order} <=> $DATA->{$b}{order}} keys %{$DATA}
 	my @resTN2 = split("\n", $resTNs2);
 	LOG($outBigLog, "\n\n" . date() . "${LGN}seqQ2:${N} Aligning CONS, BAIT, READ, and PREY sequences!${N} IGTYPE=$LRD$igtype${N}, name=${LCY}$name${N}, beg0/junc/end0=$beg_pos/$junc/$end_pos (primer/adapter=$primer_pos/$adapter_pos, fixed=$primer_pos_fix/$adapter_pos_fix), (REF1=$chr1:$colorpos1;length1=$lenz1;junc1=${LGN}$begJ1${N}, REF2=$chr2:$colorpos2;length2=$lenz2;junc2=${LGN}$begJ2${N})\nmhbeg=$DATA->{$name}{mhbeg}-$DATA->{$name}{mhend},mhpos=$DATA->{$name}{mhpos}\n\n",$NA);
 	LOG($outLog, "\n\n" . date() . "${LGN}seqQ2:${N} Aligning CONS, BAIT, READ, and PREY sequences!${N} IGTYPE=$LRD$igtype${N}, name=${LCY}$name${N}, beg0/junc/end0=$beg_pos/$junc/$end_pos (primer/adapter=$primer_pos/$adapter_pos, fixed=$primer_pos_fix/$adapter_pos_fix), (REF1=$chr1:$colorpos1;length1=$lenz1;junc1=${LGN}$begJ1${N}, REF2=$chr2:$colorpos2;length2=$lenz2;junc2=${LGN}$begJ2${N})\nmhbeg=$DATA->{$name}{mhbeg}-$DATA->{$name}{mhend},mhpos=$DATA->{$name}{mhpos}\n\n","NA");
-	($muthash, $typehash2, $beg_pos2, $end_pos2) = parse_aln(\@resTN2, "1_", "none,$beg_pos,$end_pos,$DATA->{$name}{junc},$primer_pos_fix,$adapter_pos_fix,$DATA->{$name}{mhbeg},$DATA->{$name}{mhend}", $muthash, 2, $lenMaxL, $lenMaxR, $name, $outBigLog, $outLog, $namewant);
+	($muthash, $typehash2, $beg_pos2, $end_pos2) = parse_aln(\@resTN2, "1_", "none,$beg_pos,$end_pos,$DATA->{$name}{junc},$primer_pos_fix,$adapter_pos_fix,$DATA->{$name}{mhbeg},$DATA->{$name}{mhend}", $muthash, 2, $lenMaxL, $lenMaxR, $name, $DATA->{$name}{gap}, $outBigLog, $outLog, $namewant);
 	$beg_fix = $beg_pos2 if $beg_fix < $beg_pos2;
 	$end_fix = $end_pos2 if $end_fix > $end_pos2;
 
 	LOG($outBigLog, "${YW}------------------------------------------------\n6a. Tabulating mutation from seqQ1 (Read pair #1)\n------------------------------------------------${N}\n" . date() . "\n",$NA);
 	LOG($outLog, "${YW}------------------------------------------------\n6a. Tabulating mutation from seqQ1 (Read pair #1)\n------------------------------------------------${N}\n" . date() . "\n","NA");
 
-	($igtypez, $typez1, $typez2, $all) = count_final("R1", $igtypez, $typez1, $typez2, $muthash, $typehash1, $DATA->{$name}, $name, $outBigLog, $outLog, $namewant);
+	($igtypez, $typez1, $typez2, $all) = count_final("R1", $igtypez, $typez1, $typez2, $muthash, $typehash1, $DATA->{$name}, $name, 0, $outBigLog, $outLog, $namewant);
 	LOG($outBigLog, "${N}\n",$NA);
 	LOG($outLog, "${N}\n","NA");
 
@@ -730,9 +734,10 @@ foreach my $name (sort {$DATA->{$a}{order} <=> $DATA->{$b}{order}} keys %{$DATA}
 			DIE($outBigLog, "Can't find type1 from mutpos=$mutpos mut=$mut; not ins/del/mat/mis/mh_?\n\n") if not defined $type1;
 			$typehash1->{R2}{$type1}{$type2} ++;
 		}
+		$typehash1->{tot}{tot} = 100 if $typehash1->{tot}{tot} < 10;
 	}
 
-	($igtypez, $typez1, $typez2, $all) = count_final("R1", $igtypez, $typez1, $typez2, $muthash, $typehash1, $DATA->{$name}, $name, $outBigLog, $outLog, $namewant);
+	($igtypez, $typez1, $typez2, $all) = count_final("R1", $igtypez, $typez1, $typez2, $muthash, $typehash1, $DATA->{$name}, $name, 1, $outBigLog, $outLog, $namewant);
 
 }
 close $out1;
@@ -781,6 +786,12 @@ foreach my $igtypez (sort keys %{$igtypez}) {
 	}
 }
 close $outALL;
+
+LOG($outBigLog, "\n----------------------------\n");
+LOG($outBigLog, "Example from outFile.all $LCY$outFile.all$N:\n");
+LOG($outBigLog, "----------------------------\n");
+system("head -n 5 $outFile.all");
+LOG($outBigLog, "\n----------------------------\n\n");
 
 sub muscle {
 	my ($cmd) = @_;
@@ -909,6 +920,8 @@ sub parse_inputFile {
 		#check if junc2 is the same as end2 (-) or beg2 (+)
 		junc2check($beg1, $end1, $beg2, $end2, $strand1, $strand2, $junc1, $junc2, $linecount, $line, $outLog);
 
+		$data->{$name}{junc1pos} = $junc1;
+		$data->{$name}{junc2pos} = $junc2;
 		$data->{$name}{line} .= "\n$dashhead\n>${LGN}INPUT LINE:${N}\n";
 		my $myprintcigarseq = "";
 		for (my $i = 0; $i < @def; $i++) {
@@ -1282,7 +1295,7 @@ sub parse_fasta_simple {
 }
 
 sub count_final {
-	my ($readorient1, $igtypez, $typez1, $typez2, $muthash, $typehash1, $data, $name, $outBigLog, $outLog, $namewant) = @_;
+	my ($readorient1, $igtypez, $typez1, $typez2, $muthash, $typehash1, $data, $name, $printout, $outBigLog, $outLog, $namewant) = @_;
 	my $NA = $name eq $namewant ? undef : "NA";
 	my %type1 = %{$typehash1};
 	$type1{tot}{tot} = 0;
@@ -1367,7 +1380,7 @@ sub count_final {
 			#my $print1 = "$name,$readorient1,$type1,$nuc1,$nuc2,$number,$perc,$type1{tot}{tot},igtype=$data->{igtype},";
 			LOG($outBigLog, $print1, $NA);
 			LOG($outLog, $print1, "NA");
-			print $out1 $print1;
+			print $out1 $print1 if $printout eq 1;
 			my $type3 = $type1 eq "ins" ? "inspos" : $type1 eq "del" ? "delpos" : $type1 eq "mat" ? "matpos" : $type1 eq "mis" ? "mispos" : $type1 eq "mh" ? "mhpos" : "";
 			if ($type3 ne "") {
 #				LOG($outBigLog, " (mean,sd (bp) from junction break: $type1{$type3}{$type2})\n", $NA);
@@ -1382,7 +1395,7 @@ sub count_final {
 				my $print2 = "\t$mean\t$sd";
 				LOG($outBigLog, $print2, $NA);
 				LOG($outLog, $print2, "NA");
-				print $out1 $print2;
+				print $out1 $print2 if $printout eq 1;
 			}
 			else {
 				DIELOG($outBigLog, "shouldn't happen with type1=$type1, type2=$type2, number=$number, type3=$type3\n");
@@ -1391,7 +1404,7 @@ sub count_final {
 #			my $print3 = ",$data->{chr1},$data->{begorig1},$data->{endorig1},$data->{begJ1},$data->{len1},$data->{strand1},$data->{chr2},$data->{begorig2},$data->{endorig2},$data->{begJ2},$data->{len2},$data->{strand2}\n";
 			LOG($outBigLog, $print3, $NA);
 			LOG($outLog, $print3, "NA");
-			print $out1 $print3;
+			print $out1 $print3 if $printout eq 1;
 		}
 	}
 	if (defined $type1{R2}) {
@@ -1451,14 +1464,14 @@ sub count_final {
 				#my $print1 = "$name,$readorient1,$type1,$nuc1,$nuc2,$number,$perc,$type1{tot}{tot},igtype=$data->{igtype},";
 				LOG($outBigLog, $print1, $NA);
 				LOG($outLog, $print1, "NA");
-				print $out1 $print1;
+				print $out1 $print1 if $printout eq 1;
 #				my $type3 = $type1 eq "ins" ? "inspos" : $type1 eq "del" ? "delpos" : $type1 eq "mat" ? "matpos" : $type1 eq "mis" ? "mispos" : $type1 eq "mh" ? "mhpos" : "";
 #				if ($type3 ne "") {
 ##				LOG($outBigLog, " (mean,sd (bp) from junction break: $type1{$type3}{$type2})\n", $NA);
 #					my ($mean, $sd) = split(",", $type1{$type3}{$type2});
 #					my $print2 = "\t$mean\t$sd";
 #					LOG($outBigLog, $print2, $NA);
-#					print $out1 $print2;
+#					print $out1 $print2 if $printout eq 1;
 #				}
 #				else {
 #					DIELOG($outBigLog, "shouldn't happen with type1=$type1, type2=$type2, number=$number, type3=$type3\n");
@@ -1467,7 +1480,7 @@ sub count_final {
 #			my $print3 = ",$data->{chr1},$data->{begorig1},$data->{endorig1},$data->{begJ1},$data->{len1},$data->{strand1},$data->{chr2},$data->{begorig2},$data->{endorig2},$data->{begJ2},$data->{len2},$data->{strand2}\n";
 				LOG($outBigLog, $print3, $NA);
 				LOG($outLog, $print3, "NA");
-				print $out1 $print3;
+				print $out1 $print3 if $printout eq 1;
 			}
 		}
 	}
@@ -1588,40 +1601,51 @@ sub print_cigar {
 	my ($seq1, $seq2, $flag) = ("", "", "");
 	my @seq1orig = split("", $seq1orig);
 	my ($ind1, $ind2, $ind) = (0,0,0);
+	my $die = 0;
+	my $printz = "";
    for (my $i = 0; $i < @{$nums}; $i++) {
 		my $alp = $alps->[$i];
 		my $num = $nums->[$i];
 		for (my $j = $ind; $j < $ind + $num; $j++) {
-		if ($alp eq "M") {
-			$seq1 .= $seq1orig[$j];
-			$seq2 .= $seq1orig[$j];
-			$flag .= "|";
-			$ind1 ++;
-			$ind2 ++;
-		}
-		elsif ($alp eq "X" or $alp eq "N") {
-			$seq1 .= $seq1orig[$j];
-			$seq2 .= $seq1orig[$j];
-			$flag .= "m";
-			$ind1 ++;
-			$ind2 ++;
-		}
-		elsif ($alp eq "D") {
-			$seq1 .= $seq1orig[$j];
-			$seq2 .= "-";			
-			$ind1 ++;
-			$flag .= "D";
-		}
-		elsif ($alp eq "I") {
-			$seq1 .= "-";
-			$seq2 .= $seq1orig[$j];
-			$ind2 ++;
-			$flag .= "I";
-		}
+			$die = 1 if not defined($seq1orig[$j]);
+			my $seq1origchunk = $seq1orig[$j];
+			$seq1origchunk = "-" if not defined $seq1origchunk;
+			if ($alp eq "M") {
+				$seq1 .= $seq1origchunk;
+				$seq2 .= $seq1origchunk;
+				$flag .= "|";
+				$ind1 ++;
+				$ind2 ++;
+				$printz .= "\t$seq1origchunk M $seq1origchunk\tind=$ind, ind1=$ind1, ind2=$ind2, alp=$alp, num=$num\n"; #if $name eq $namewant;
+			}
+			elsif ($alp eq "X" or $alp eq "N") {
+				$seq1 .= $seq1origchunk;
+				$seq2 .= $seq1origchunk;
+				$flag .= "m";
+				$ind1 ++;
+				$ind2 ++;
+				$printz .= "\t$seq1origchunk m $seq1origchunk\tind=$ind, ind1=$ind1, ind2=$ind2, alp=$alp, num=$num\n"; #if $name eq $namewant;
+			}
+			elsif ($alp eq "D") {
+				$seq1 .= $seq1origchunk;
+				$seq2 .= "-";			
+				$ind1 ++;
+				$flag .= "D";
+				$printz .= "\t$seq1origchunk D -\tind=$ind, ind1=$ind1, ind2=$ind2, alp=$alp, num=$num\n"; #if $name eq $namewant;
+			}
+			elsif ($alp eq "I") {
+				$seq1 .= "-";
+				$seq2 .= $seq1origchunk;
+				$ind2 ++;
+				$flag .= "I";
+				$printz .= "\t- I $seq1origchunk\tind=$ind, ind1=$ind1, ind2=$ind2, alp=$alp, num=$num\n"; #if $name eq $namewant;
+			}
 		}
 		$ind += $num;
    }
-	LOG($outBigLog, "seqT  " . colorize($seq1orig) . "\nREF   " . colorize($seq1) . "\nseqT  " . colorize($seq2) . "\nflag  " . $flag . "\n\n") if $name eq $namewant;
+	LOG($outBigLog, "seqTN  " . colorize($seq1orig) . "\nREF    " . colorize($seq1) . "\nseqTR  " . colorize($seq2) . "\nflag   " . $flag . "\n\n") if $name eq $namewant;
+#	LOG($outBigLog, "\n\nDEAD\n\n$printz\n\nname=$name\nind1=$ind1, ind2=$ind2, ind=$ind\n$cigar\nseqTN  " . colorize($seq1orig) . "\nREF    " . colorize($seq1) . "\nseqTR  " . colorize($seq2) . "\nflag   " . $flag . "\n\n") if $die eq 1;
+	LOG($outBigLog, "\n\nDEAD\n\n$printz\n\nname=$name\nind1=$ind1, ind2=$ind2, ind=$ind\n$cigar\nseqTN  " . colorize($seq1orig) . "\nREF    " . colorize($seq1) . "\nseqTR  " . colorize($seq2) . "\nflag   " . $flag . "\n\n") if $die eq 1;
 	return($seq1);
 }
 __END__

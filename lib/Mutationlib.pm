@@ -16,6 +16,7 @@ fix_pos
 );
 sub fix_pos {
    my ($pos, $seqprev, $seqcurr) = @_;
+	return($pos) if $pos < 0;
    my @seqprev = split("", $seqprev);
    my @seqcurr = split("", $seqcurr);
    my $ind = -1;
@@ -44,39 +45,72 @@ sub fix_pos {
 
 sub get_sampletype {
 	my ($sampleID) = @_; #W1
-	my ($sample0, $treat0) = $sampleID =~ /^([A-Z])([0-9]+)$/;
+	my ($sample0, $treat0, $cut) = $sampleID =~ /^([A-Z])([0-9]+)(cut)?$/;
+	$cut = " (B. CUT)" if defined $cut;
+	$cut = " (A. NOT_CUT)" if not defined $cut;
 
 	my $sample = $sample0 eq "W" ? "1. WT" :
 					 $sample0 eq "S" ? "2. Setx KO" :
 					 $sample0 eq "R" ? "3. RNH2b KO" :
-					 $sample0 eq "D" ? "4. Setx RNH2b DKO" : "5. UNK $sample0";
+					 $sample0 eq "D" ? "4. Setx RNH2b DKO" : "5. UNK SAMPLEID $sample0";
 
-	my $treat = $treat0 eq "1" ? "1. IgG1 undig germ" :
- 					 $treat0 eq "2" ? "2. IgG3 undig rich" :
-					 $treat0 eq "3" ? "3. IgG1 diges rich" : "5. UNK $treat0";
+	my $treat = $treat0 eq "1" ? "1. IgG1 undig germ$cut" :
+ 					 $treat0 eq "2" ? "2. IgG3 undig rich$cut" :
+					 $treat0 eq "3" ? "3. IgG1 diges rich$cut" : "4. UNK TREAT $treat0$cut";
 
 	return($sample, $treat);
 }
 sub get_igtype {
-	my ($chr, $beg, $end, $strand, $outLog) = @_;
-my @beg0ind = (114650000,114590000,114564000,114540000,114520000,114508000,114490000,114000000,114675001);
-my @end0ind = (114675000,114649999,114589999,114563999,114539999,114519999,114507999,114489999,114999999);
-my @junctypes = ("01. IgM","02. IgG3","03. IgG1","04. IgG2b","05. IgG2c","06. IgE","07. IgA","08. IgA Down100k","09. IgM Up250k","10. NonIgh in Chr12","11. Other Chrs");
+	my ($junc1pos, $junc2pos, $chr, $beg, $end, $strand, $outLog) = @_;
+#my @beg0ind =   (114650000,114590000 ,114564000 ,114540000  ,114520000  ,114508000,114490000,114000000         ,114675001);
+#my @end0ind =   (114675000,114649999 ,114589999 ,114563999  ,114539999  ,114519999,114507999,114489999         ,114999999);
+my @beg0ind =   (114656769,114594435 ,114563451 ,114541176  ,114523536  ,114507471,114493041,114000000         ,114675001);
+my @end0ind =   (114670052,114609628 ,114582590 ,114559110  ,114539403  ,114520744,114508309,114489999         ,114999999);
+my @junctypes = ("01. IgM","02. IgG3","03. IgG1","04. IgG2b","05. IgG2c","06. IgE","07. IgA","08. IgA Down100k","09. IgM Up250k","10. Chr12","11. Other Chrs");
 
-	return($junctypes[10]) if $chr ne "chr12";
-	my $junc;
-	for (my $i = 0; $i < @beg0ind; $i++) {
-		my $beg0 = $beg0ind[$i];
-		my $end0 = $end0ind[$i];
-		$junc = $strand eq "+" ? $beg : $end;
-		my ($int) = intersect($beg0, $end0, $junc, $junc);
-		#die "$int ($beg0-$end0, $junc)\n" if $int == 1;
-		return $junctypes[$i] if $int == 1;#intersect($beg0, $end0, $junc, $junc) == 1;
+	my ($junctype, $junc1dist, $junc2dist, $length1, $length2);
+	$junc1dist = $junc1pos - $beg0ind[0];
+	$length1 = $end0ind[0] - $beg0ind[0];
+
+#      my ($igtype, $junc1dist, $junc2dist) = get_igtype($junc1, $junc2, $chr2, $beg2, $end2, $strand2, $outLog);
+
+	if ($chr ne "chr12") {
+		$junctype = $junctypes[10];
+		$junc2dist = $end - $beg;
+		$length2 = $end - $beg < 10000 ? 10000 : $end - $beg;
+#		print "1. junc1pos=$junc1pos, junc2pos=$junc2pos, chr=$chr:$beg-$end ($strand), junctype=$junctype, junc1dist=$junc1dist, junc2dist=$junc2dist, length1=$length1, length2=$length2\n";
+		return($junctype, $junc1dist, $junc2dist, $length1, $length2);
 	}
-	if ($junc >= 114490000 and $junc <= 114675000) {	
-		DIELOG($outLog, "$chr:$beg-$end (using $LGN$junc$N) wasn't counted as IgN (gonna be \"$junctypes[9]\")\n");
+	else {
+		for (my $i = 0; $i < @beg0ind; $i++) {
+			my $beg0 = $beg0ind[$i];
+			my $end0 = $end0ind[$i];
+	
+			$junctype = $junctypes[$i];
+			$junc2dist = $strand eq "-" ? $junc2pos - $beg0 : $end0 - $junc2pos;
+			$length2 = $end0 - $beg0;
+	
+			my $junc = $strand eq "-" ? $beg : $end;
+	
+			my ($int) = intersect($beg0, $end0, $junc, $junc);
+			#die "$int ($beg0-$end0, $junc)\n" if $int == 1;
+			if ($int == 1) {
+#				print "2. junc1pos=$junc1pos, junc2pos=$junc2pos, beg0-end0=$beg0-$end0, junc=$junc, chr=$chr:$beg-$end ($strand), junctype=$junctype, junc1dist=$junc1dist, junc2dist=$junc2dist, length1=$length1, length2=$length2\n";
+				return($junctype, $junc1dist, $junc2dist, $length1, $length2);
+			}
+	
+		}
+		$junctype = $junctypes[9];
+		$junc2dist = -1; #$end - $beg;
+		$length2 = -1; #$end - $beg < 10000 ? 10000 : $end - $beg;
+#		print "3. junc1pos=$junc1pos, junc2pos=$junc2pos, chr=$chr:$beg-$end ($strand), junctype=$junctype, junc1dist=$junc1dist, junc2dist=$junc2dist, length1=$length1, length2=$length2\n";
+		return($junctype, $junc1dist, $junc2dist, $length1, $length2);
 	}
-	return($junctypes[9]);
+
+
+#	if ($junc >= 114490000 and $junc <= 114675000) {	
+#		DIELOG($outLog, "$chr:$beg-$end (using $LGN$junc$N) wasn't counted as IgN (gonna be \"$junctypes[9]\")\n");
+#	}
 }
 
 sub colorize {
@@ -333,9 +367,10 @@ sub get_mh {
 ###########################
 
 sub parse_aln {
-	my ($lines, $leader, $type, $muthash, $readorient, $lenMaxL, $lenMaxR, $name, $outBigLog, $outLog, $namewant, $reverse) = @_;
+	my ($lines, $leader, $type, $muthash, $readorient, $lenMaxL, $lenMaxR, $name, $gap, $outBigLog, $outLog, $namewant, $reverse) = @_;
 	my $reverseprint = defined $reverse ? $reverse : "rev undef";
 	#print "reverse is $reverseprint, type is $type, leader is $leader, lines\n";
+	my $die = 0;
 	my ($beg0, $end0) = (-1,-1);
 	my ($primer_pos_fix, $adapter_pos_fix, $mhbeg, $mhend) = (-1,-1,-1,-1);
 	my $junc = 0;
@@ -509,6 +544,7 @@ sub parse_aln {
 #				if (defined $namewant) {
 					if ($def =~ /1_neg/) {
 						my @whitespace = (" ") x (length($def) - length($name));
+						@whitespace = (" ") x (length($def)) if $type ne "none";
 						$whitespace = join("", @whitespace);
 						my @number; my @number10; my @flag;
 						for (my $l = 0; $l < (1+length($seq)); $l++) {
@@ -561,6 +597,7 @@ sub parse_aln {
 									$number[$k] = "$YW$number[$k]$N";
 								}
 #								$seqind ++ if $seqchunk ne "-";
+								$die = "Undefined flag at k=$k def=$def typr=$type\n" if not defined $flag[$k];
 							}
 							$whitespace = join("", @whitespace);
 							$printhead .= join("", @whitespace) . "\t" . colorize(join("", @flag), $junc) . "\n";
@@ -633,6 +670,8 @@ sub parse_aln {
 	undef $def;
 	undef $seq;
 
+	# length of cons
+
 	$reverseprint = defined $reverse ? $reverse : "rev undef";
 #	if ($type =~ /jun/) {
 #		LOG($outBigLog, $print{$def1name});
@@ -660,11 +699,19 @@ sub parse_aln {
 	}
 =cut
 #	die "aaa\n" if $type eq "none";
+
+	$type{tot}{len} = 0 if not defined $type{tot}{len};
+	$type{tot}{tot} = 0 if not defined $type{tot}{tot};
+	if ($type eq "none") {
+		$type{tot}{len} += 1 if $gap ne 0;
+	}
+
 	my $defind = 0;
 	foreach my $def1 (sort keys %seq) {
 		next if $def1 !~ /$leader/;
 		foreach my $def2 (sort keys %seq) {
 			next if $def1 eq $def2;
+			#def is is always 1_neg
 			if ($type eq "none") {
 				next if $def2 !~ /(3_con|2_neg|4_neg|3_neg)/;
 			}
@@ -757,15 +804,25 @@ sub parse_aln {
 					$mut{$def2}[$i] = "H" if $seqchunk1 ne "-" and $seqchunk1 eq $seqchunk2;
 					$mhseq .= $seqchunk1 if $seqchunk1 ne "-" and $seqchunk1 eq $seqchunk2;
 #					print "ind=$ind1, i=$i, mut $def2 [$i] = H\n";
+					if ($seqchunk1 ne "-" and $seqchunk2 ne "-" and $def2 =~ /3_con/ and $def1 =~ /1_neg/ and $type eq "none") {
+						$type{tot}{len} -= 1;
+					}
 					if ($i == $mhend  and $type eq "none" and $def2 =~ /3_con/ and $mhseq ne "") {
 						$type{mh}{$mhseq} ++;
 						push(@{$type2{mhpos}{$mhseq}}, $mhbeg);
 						$muthash->{$mhbeg}{$readorient} = "mh_$mhseq";
+						if ($seqchunk1 ne "-" and $seqchunk2 ne "-" and $def2 =~ /3_con/ and $def1 =~ /1_neg/ and $type eq "none") {
+							$type{tot}{len} += 1;
+						}
 					}
 				}
 
 #				if (($ind1 >= $beg0 or $beg0 eq -1) and ($ind1 <= $end0 or $end0 eq -1)) {
 				if (($i >= $beg0 or $beg0 eq -1) and ($i < $newend0 or $newend0 eq -1)) {
+					if ($seqchunk1 ne "-" and $seqchunk2 ne "-" and $def2 =~ /3_con/ and $def1 =~ /1_neg/ and $type eq "none") {
+#						die "END0 isn't newend0 ($end0 != $newend0\n" if $end0 ne $newend0;
+						$type{tot}{len} ++;
+					}
 					#next if $type eq "none" and $def2 =~ /3_neg/ and $ind1 <= $junc;
 					#next if $type eq "none" and $def2 =~ /2_neg/ and $ind1 > $junc;
 					if ($def2 !~ /3_con/ and $hasmatch ne 1) {
@@ -991,7 +1048,7 @@ sub parse_aln {
 				my $primer_pos = $wantpos;
 				my $orig_primer_pos = $primer_pos;
 				$primer_pos = 25 if $primer_pos eq -1;
-				my $beg_pos = $lenz1 - $lenMaxL >= $primer_pos ? $lenz1 - $lenMaxL : $lenz1 >= $primer_pos ? $primer_pos : -99;
+				my $beg_pos = $lenz1 - $lenMaxL >= $primer_pos ? $lenz1 - $lenMaxL : $lenz1 >= $primer_pos ? $primer_pos : ($junc - 10 > 0 and $primer_pos > $junc) ? $junc - 10 : ($primer_pos > $junc) ? $junc : -99;
 				LOG($outBigLog, "\t${LGN}FINAL BEG_POS=$beg_pos and FINAL PRIMER_POS=$primer_pos$N. (orig_primer_pos = $YW$orig_primer_pos$N, perc mat=$percmaxmat\%, thus we use $YW$primer_pos$N. Junc = $LGN$junc$N, so beg_pos = $LCY$beg_pos$N, begdash=$begdash, dashes=$dashes)\n\n");# if $name eq $namewant;
 				return($wantpos, $primer_pos, $beg_pos, $begdash, $dashes);
 			}
@@ -1029,7 +1086,9 @@ sub parse_aln {
 		$print_aln .= "------------------------------------------------\n";
 		$print_aln .= "1. CONSENSUS (CON) vs. READ (SEQ):\n";
 		$print_aln .= "$YW$name$N (${LGN}R$readorient$N)\n";
-		$print_aln .= "------------------------------------------------\n\n";
+		$print_aln .= "------------------------------------------------\n";
+		$print_aln .= "type{tot}len} = $type{tot}{len}\n";
+		$print_aln .= "type{tot}tot} = $type{tot}{tot}\n\n";
 		$print_aln .= "$print{head}";
 		foreach my $defz (sort keys %print) {
 			if ($defz =~ /3_con/) {
@@ -1084,6 +1143,8 @@ sub parse_aln {
 	$print_aln .= "$YW$name$N\n" . $info . "\n\n";
 	LOG($outLog, $print_aln, "NA");
 	LOG($outBigLog, $print_aln);
+	die if not defined $type{tot}{tot};
+	LOG($outBigLog, $die) if $die ne 0;
 	return($muthash, \%type, $beg0, $end0);
 }
 
