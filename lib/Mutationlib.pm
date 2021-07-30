@@ -13,35 +13,112 @@ get_mh
 get_igtype
 get_sampletype
 fix_pos
+fix_pos2
 );
+
 sub fix_pos {
-   my ($pos, $seqprev, $seqcurr) = @_;
-	return($pos) if $pos < 0;
-   my @seqprev = split("", $seqprev);
-   my @seqcurr = split("", $seqcurr);
-   my $ind = -1;
-   my $seqp = "";
-	print "poswant=$pos\n";
-   for (my $i = 0; $i < @seqprev; $i++) {
-      $ind ++ if $seqprev[$i] ne "-";
-      $seqp .= $seqprev[$i] if $seqprev[$i] ne "-";
-      print "$i. ind=$ind poswant=$pos seq=$seqp (seqprev[i] = $seqprev[$i])\n" if $i eq $pos or $i == @seqprev - 1;
-      last if $i eq $pos;
-   }
-   print "new indwant=$ind\n";
-   $pos = $ind;
-   my $pos2 = -1;
-   $ind = -1;
-   my $seqc = "";
-   for (my $i = 0; $i < @seqcurr; $i++) {
-      $ind ++ if $seqcurr[$i] ne "-";
-      $seqc .= $seqcurr[$i] if $seqcurr[$i] ne "-";
-      print "$i. ind=$ind indwant=$pos seq=$seqc (seqcurr[i] = $seqcurr[$i])\n" if $pos2 ne -1;
-      $pos2 = $i if $ind eq $pos and $seqcurr[$i] ne "-";
-      last if $pos2 ne -1;
-   }
-   return($pos2);
+   my ($poses, $seqprev, $seqcurr, $outBigLog) = @_;
+	my @poses = split(",", $poses);
+	my @respos;
+	foreach my $pos (sort {$a <=> $b} @poses) {
+		if ($pos < 0) {
+			push(@respos, $pos);
+			next;
+		}
+	   my @seqprev = split("", $seqprev);
+	   my @seqcurr = split("", $seqcurr);
+	   my $ind = -1;
+	   my $seqp = "";
+	   for (my $i = 0; $i < @seqprev; $i++) {
+	      $ind ++ if $seqprev[$i] ne "-";
+	      $seqp .= $seqprev[$i] if $seqprev[$i] ne "-";
+	   #   print "$i. ind=$ind poswant=$pos seq=$seqp (seqprev[i] = $seqprev[$i])\n" if $i eq $pos or $i == @seqprev - 1;
+	      last if $i eq $pos;
+	   }
+	   #print "new indwant=$ind\n";
+	   $pos = $ind;
+	   my $pos2 = -1;
+	   $ind = -1;
+	   my $seqc = "";
+	   for (my $i = 0; $i < @seqcurr; $i++) {
+	      $ind ++ if $seqcurr[$i] ne "-";
+	      $seqc .= $seqcurr[$i] if $seqcurr[$i] ne "-";
+	      $pos2 = $i if $ind eq $pos and $seqcurr[$i] ne "-";
+	      last if $pos2 ne -1;
+	   }
+		push(@respos, $pos2);
+	}
+
+	LOG($outBigLog, "\nfix_pos:\n$poses\n" . join(",", @respos) . "\n-------------------\n\n") if defined $outBigLog;
+	return(join(",", @respos));
 }
+
+sub fix_pos2 {
+   my ($poses, $seqprev, $seqcurr, $outBigLog) = @_;
+	my @origpos;
+	my @poses = split(",", $poses);
+	my @respos;
+	my %pos;
+	my %ind;
+	foreach my $pos (sort {$a <=> $b} @poses) {
+		$pos{$pos}{check} = 1;
+		if ($pos < 0) {
+			$pos{$pos}{ind0} = $pos;
+			$pos{$pos}{ind1} = $pos;
+		}
+	}
+#	foreach my $pos (sort {$a <=> $b} @poses) {
+#		if ($pos < 0) {
+#			push(@respos, $pos);
+#			next;
+#		}
+	   my @seqprev = split("", $seqprev);
+	   my @seqcurr = split("", $seqcurr);
+	   my $ind = -1;
+	   my $seqp = "";
+		#print "poswant=$pos\n";
+	   for (my $i = 0; $i < @seqprev; $i++) {
+	      $ind ++ if $seqprev[$i] ne "-";
+	      $seqp .= $seqprev[$i] if $seqprev[$i] ne "-";
+	   #   print "$i. ind=$ind poswant=$pos seq=$seqp (seqprev[i] = $seqprev[$i])\n" if $i eq $pos or $i == @seqprev - 1;
+			
+			if (defined $pos{$i}) {
+				$ind{$ind} = $i if not defined $pos{$i}{ind0};
+				$pos{$i}{ind0} = $ind if not defined $pos{$i}{ind0};
+			}
+
+
+#	      last if $i eq $pos;
+
+	   }
+	   #print "new indwant=$ind\n";
+
+
+#	   $pos = $ind;
+#	   my $pos2 = -1;
+	   $ind = -1;
+	   my $seqc = "";
+	   for (my $i = 0; $i < @seqcurr; $i++) {
+	      $ind ++ if $seqcurr[$i] ne "-";
+	      $seqc .= $seqcurr[$i] if $seqcurr[$i] ne "-";
+##	   #   print "$i. ind=$ind indwant=$pos seq=$seqc (seqcurr[i] = $seqcurr[$i])\n" if $pos2 ne -1;
+			if (defined $ind{$ind} and $seqcurr[$i] ne "-") {
+				my $previ = $ind{$ind};
+				$pos{$previ}{ind1} = $i;
+			}
+#	      $pos2 = $i if $ind eq $pos and $seqcurr[$i] ne "-";
+#	      last if $pos2 ne -1;
+	   }
+	foreach my $previ (sort {$a <=> $b} keys %pos) {
+		my $ind0 = $pos{$previ}{ind0};
+		my $ind1 = $pos{$previ}{ind1};
+		push(@origpos, $previ);
+		push(@respos, $ind1);
+	}
+	LOG($outBigLog, "\n\n" . join(",", @origpos) . "\n" . join(",", @respos) . "\n\n------------------------------->\n") if defined $outBigLog;
+	return(join(",", @respos));
+}
+
 
 sub get_sampletype {
 	my ($sampleID) = @_; #W1
@@ -141,11 +218,15 @@ sub colorize {
 		}
 		else {
 			die "undef i=$ind seq=$seqs\n" if not defined $seq[$ind];
-			$print .= $LGN . $seq[$ind] if $seq[$ind] =~ /^a$/i;
-			$print .= $YW . $seq[$ind] if $seq[$ind] =~ /^c$/i;
-			$print .= $LPR . $seq[$ind] if $seq[$ind] =~ /^g$/i;
-			$print .= $LRD . $seq[$ind] if $seq[$ind] =~ /^t$/i;
-			$print .= "$N$seq[$ind]" if $seq[$ind] !~ /^[acgt]$/i;
+			$print .= $LGN . $seq[$ind] if $seq[$ind] =~ /^A$/;
+			$print .= $YW . $seq[$ind] if $seq[$ind] =~ /^C$/;
+			$print .= $LPR . $seq[$ind] if $seq[$ind] =~ /^G$/;
+			$print .= $LRD . $seq[$ind] if $seq[$ind] =~ /^T$/;
+			$print .= $N . $seq[$ind] if $seq[$ind] =~ /^a$/;
+			$print .= $N . $seq[$ind] if $seq[$ind] =~ /^c$/;
+			$print .= $N . $seq[$ind] if $seq[$ind] =~ /^g$/;
+			$print .= $N . $seq[$ind] if $seq[$ind] =~ /^t$/;
+			$print .= "$N$seq[$ind]" if $seq[$ind] !~ /^[acgtACGT]$/;
 		}
 		$ind = defined $reverse ? $ind - 1 : $ind + 1;
 	}
@@ -447,7 +528,7 @@ sub parse_aln {
 #				print "$tempdef, length=$longbeg\n";
 
 				if ($longbeg > $beg0 and not defined $long{$tempdef1}{$tempdef2} and (($tempdef1 =~ /1_neg/ and $tempdef2 =~ /3_con/) or ($tempdef1 =~ /3_con/ and $tempdef2 =~ /1_neg/))) {
-					$info .= "BEG0 ($LGN$beg0$N): has to modify beg0 into";
+					$info .= "BEG0 ($LGN$beg0$N): longbeg=$LGN$longbeg$N, has to modify beg0 into";
 					$long{$tempdef1}{$tempdef2} = $longbeg;
 					$long{$tempdef2}{$tempdef1} = $longbeg;
 					$beg0 = $longbeg + 10 < $junc ? $longbeg + 10 : $longbeg;
@@ -459,14 +540,14 @@ sub parse_aln {
 				my $tempseq2 = $temp{$tempdef2};
 				$tempseq2 =~ s/([A-Za-z0-9])\-*$/$1/;
 				$short = length($tempseq1) < length($tempseq2) ? length($tempseq1) : length($tempseq2);
-#				print "$tempdef, length=$short\n";
+				LOG($outBigLog, "HERE!\ntempdef=$tempdef\nlength=$short\n");
 				next if defined $short{$tempdef1}{$tempdef2};
 #				$end0 = $short if ($end0 > $short and $tempdef1 =~ /1_neg/ and $tempdef2 =~ /3_con/) or ($tempdef2 =~ /1_neg/ and $tempdef1 =~ /3_con/);
 				if ($end0 > $short and not defined $short{$tempdef1}{$tempdef2} and (($tempdef1 =~ /1_neg/ and $tempdef2 =~ /3_con/) or ($tempdef1 =~ /3_con/ and $tempdef2 =~ /1_neg/))) {
 					$short{$tempdef1}{$tempdef2} = $short;
 					$short{$tempdef2}{$tempdef1} = $short;
 #				if ($end0 >= $short and $tempdef2 =~ /3_con/ and $short eq length($tempseq1) and $tempdef1 =~ /1_neg/) or ($tempdef1 =~ /3_con/ and $short eq length($tempseq2) and $tempdef2 =~ /1_neg/ and $end0 >= $short)) {
-					$info .= "END0 ($LGN$endposorig$N): has to modify end0 into";
+					$info .= "END0 ($LGN$endposorig$N): short=$LGN$short$N, has to modify end0 into";
 					my $infomod = "short $short-25 = " . ($short-25);
 					$end0 = $short - 25 if $short eq length($tempseq1) and $tempdef1 =~ /1_neg/;
 #					$end0 = $short - 25 if $short eq length($tempseq2) and $tempdef2 =~ /1_neg/;
