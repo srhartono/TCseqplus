@@ -16,7 +16,7 @@ TranslocPreprocess.pl <meta.txt> <preprocess output folder> --indir <input folde
 
 ---
   
-### 2. IIRC TranslocWrapper.pl is the mapping part of the software which will put results in the results/ directory
+### 2. TranslocWrapper.pl is the mapping part of the software which will put results in the results/ directory
 
 TranslocWrapper.pl <meta.txt> <preprocess output folder from (1)> <results output folder>
 
