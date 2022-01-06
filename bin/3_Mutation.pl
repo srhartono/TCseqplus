@@ -37,6 +37,12 @@ ${LGN}Optional:${N}
 
 \n\n" unless defined $opt_i and -e $opt_i and defined $opt_m;
 
+my @add = (0);
+for (my $ki = 0; $ki < 100; $ki ++) {
+	push(@add, -1 * $ki);
+	push(@add, $ki);
+}
+
 my $inputFile = getFullpath($opt_i);
 my ($folder1, $fileName1) = mitochy::getFilename($inputFile, "folderfull");
 my ($sampleIDfull) = $fileName1 =~ /^(.*[WSDR][123](cut)?)_result_filter.tlx/;
@@ -53,6 +59,7 @@ die "\n${LRD}ERROR!$N:\nsampleID from -I ($LGN$optIprt$N) or -i ($sIDprt) has to
 my $metaFile    = $opt_m; 
 	$metaFile    = "/group/stella/Work/Data/Fastq/200323_SLIMS0323_BC_mm_TCseq_JackieBarlowTCseq/0_Fastq/0_META.TXT" if $metaFile eq 1;
 	$metaFile    = "/group/stella/Work/Data/Fastq/200903_SLIMS4168_BC_mm_TCseq_JackieBarlowTCseq/0_Fastq/0_META.TXT" if $metaFile eq 2;
+my ($metaFolder, $metaFilename) = getFilename($metaFile, "folderfull");
 
 my $debug_num   = defined $opt_D ? $opt_D : 0;
 
@@ -72,10 +79,13 @@ my $muscleparam = defined $opt_p ? $opt_p : "-maxiters 64";
 my $outFile     = defined $opt_o ? $opt_o : "$folder1/$fileName1.$lenMaxL.$lenMaxR.final.tsv";
 my $logFile     = $outFile . ".LOG";
 my $biglogFile  = $outFile . ".BIGLOG";
+my $outzfixFile = $outFile . ".outzfix.bed.temp";
+my $outztempFile = $outFile . ".outztemp.bed.temp";
+my $outzfaFile = $outFile . ".outztemp.fa";
 open (my $out1,      ">", "$outFile") or die "Failed to write to ${LCY}$outFile${N}: $!\n\n";
 open (my $outBigLog, ">", "$biglogFile") or die "Failed to write to ${LCY}$biglogFile${N}: $!\n\n";
 open (my $outLog,    ">", "$logFile") or DIELOG($outBigLog, "Failed to write to ${LCY}$logFile${N}: $!\n\n");
-
+open (my $outloc,    ">", "$outFile.loc") or DIELOG($outBigLog, "Failed to write to $LCY$outFile.loc$N: $!\n\n");
 # Create tempFolder $folder1/.temp
 my $tempFolder = "$folder1/.temp";
 if (not -d "$tempFolder") {
@@ -125,6 +135,78 @@ runScript=$runScript\n\n";
 my $header_print_0_param = header_print("0. PARAMETERS:", "", $param_print);
 LOG($outBigLog, $header_print_0_param);
 
+# Parse consensus fix file
+
+my %cons = %{get_cons_fix_hash()};
+
+sub get_cons_fix_hash {
+	my %cons;
+	my $IgMFile = "/home/mitochi/Work/Project/TCseqplus/JackieTCseq/FA/S129_IgM_fa.aln.fa.out";
+	my $IgG1File = $IgMFile; $IgG1File =~ s/_IgM_/_IgG1_/;
+	my $IgG3File = $IgMFile; $IgG3File =~ s/_IgM_/_IgG3_/;
+	die "Cannot find IgMFile $LCY$IgMFile$N!\n" if not -e $IgMFile;
+	die "Cannot find IgG1File $LCY$IgG1File$N!\n" if not -e $IgG1File;
+	die "Cannot find IgG3File $LCY$IgG3File$N!\n" if not -e $IgG3File;
+
+	$cons{IgM} = get_cons_fix_main($IgMFile);
+	$cons{IgG1} = get_cons_fix_main($IgG1File);
+	$cons{IgG3} = get_cons_fix_main($IgG3File);
+
+	return(\%cons);
+}
+
+sub get_cons_fix_main {
+	my ($file) = @_;
+	my %cons;
+	my $linecount = 0;
+	open (my $in, "<", $file) or die "Failed to read from $file: $!\n";
+	while (my $line = <$in>) {
+		chomp($line);
+		$linecount ++;
+		my @arr = split("\t", $line);
+		next if @arr ne 7;
+		my ($pos, $beg1, $end1, $beg2, $end2, $type, $count) = @arr;
+		$count =~ s/^count\=//;
+		my ($type1, $type2) = $type =~ /^([A-Za-z0-9]+)_(.+)$/;
+		$type2 = "$type2\_$type2" if $type1 eq "mat";
+		if ($type1 eq "ins") {
+			LOG($outBigLog, "file=$LCY$file$N, insertion at pos=$pos, beg1=$beg1, beg2=$beg2, count=$count\n");
+			my @type2 = split("", $type2);
+			for (my $i = 0; $i < @type2; $i++) {
+				my $ind = $beg1 + $i;
+				die "Already defined cons 2 beg1=$beg1 i=$i ind=$ind type1=$cons{2}{$beg1}{$ind}{type1}, type2 = $type2[$i]\n" if defined $cons{2}{$beg1}{$ind}{type1};
+				$cons{2}{$beg1}{$ind}{pos} = $pos;
+				$cons{2}{$beg1}{$ind}{beg2} = $ind;
+				$cons{2}{$beg1}{$ind}{type1} = $type1;
+				$cons{2}{$beg1}{$ind}{type2} = $type2[$i];
+				$cons{2}{$beg1}{$ind}{count} = 1;
+			}
+		}
+		if ($type1 ne "del") {
+			$cons{1}{$beg1}{pos} = $pos;
+			$cons{1}{$beg1}{beg2} = $beg2;
+			$cons{1}{$beg1}{type1} = $type1;
+			$cons{1}{$beg1}{type2} = $type2;
+			$cons{1}{$beg1}{count} = $count;
+		}
+		else {
+			LOG($outBigLog, "file=$LCY$file$N, deletion at pos=$pos, beg1=$beg1, beg2=$beg2, count=$count\n");
+			my @type2 = split("", $type2);
+			for (my $i = 0; $i < @type2; $i++) {
+				my $ind = $beg1 + $i;
+				die "Already defined cons 1 i=$ind type1=$cons{1}{$ind}{type1}, type2 = $type2[$i]\n" if defined $cons{1}{$ind}{type1};
+				$cons{1}{$ind}{pos} = $pos;
+				$cons{1}{$ind}{beg2} = $ind;
+				$cons{1}{$ind}{type1} = $type1;
+				$cons{1}{$ind}{type2} = $type2[$i];
+				$cons{1}{$ind}{count} = 1;
+			}
+		}
+		
+	}
+	close $in;
+	return(\%cons);
+}
 # -------------------------------------------
 # 1. Processing $metaFile <metaFile.txt>
 # -------------------------------------------
@@ -189,13 +271,15 @@ LOG($outBigLog, "\nTotal Read = $LGN$total_read$N\n");
 # 4. Getting QUERY seq file from fastq
 # -------------------------------------------
 
-my @inputFQ_R1 = <$folder1/../../0_Fastq/*$sampleIDfull\_R1.fq.gz>;
-DIELOG($outBigLog, "Can't find input fastq R1 (../../0_Fastq/*$sampleIDfull\_R1.fq.gz)\n") if @inputFQ_R1 == 0;
-DIELOG($outBigLog, "\nFound multiple input fastq R1 (../../0_Fastq/*$sampleIDfull\_R1.fq.gz)\n") if @inputFQ_R1 > 1;
+#my @inputFQ_R1 = <$folder1/../../0_Fastq/*$sampleIDfull\_R1.fq.gz>;
+my @inputFQ_R1 = <$metaFolder/*$sampleIDfull\_R1.fq.gz>;
+DIELOG($outBigLog, "Can't find input fastq R1 ($metaFolder/*$sampleIDfull\_R1.fq.gz)\n") if @inputFQ_R1 == 0;
+DIELOG($outBigLog, "\nFound multiple input fastq R1 ($metaFolder/*$sampleIDfull\_R1.fq.gz)\n") if @inputFQ_R1 > 1;
 
-my @inputFQ_R2 = <$folder1/../../0_Fastq/*$sampleIDfull\_R2.fq.gz>;
-DIELOG($outBigLog, "Can't find input fastq R1 (../../0_Fastq/*$sampleIDfull\_R1.fq.gz)\n") if @inputFQ_R2 == 0;
-DIELOG($outBigLog, "Found multiple input fastq R2 (../../0_Fastq/*$sampleIDfull\_R2.fq.gz)\n") if @inputFQ_R2 > 1;
+#my @inputFQ_R2 = <$folder1/../../0_Fastq/*$sampleIDfull\_R2.fq.gz>;
+my @inputFQ_R2 = <$metaFolder/*$sampleIDfull\_R2.fq.gz>;
+DIELOG($outBigLog, "Can't find input fastq R1 ($metaFolder/*$sampleIDfull\_R1.fq.gz)\n") if @inputFQ_R2 == 0;
+DIELOG($outBigLog, "Found multiple input fastq R2 ($metaFolder/*$sampleIDfull\_R2.fq.gz)\n") if @inputFQ_R2 > 1;
 
 
 # header print
@@ -235,6 +319,7 @@ my %totalpair;
 my $good = 0;
 my %okay;
 my $nexted_sequndef = 0;
+my $nexted_others = 0;
 my $nexted_bothshort = 0;
 my $nexted_begshort = 0;
 my $nexted_endshort = 0;
@@ -328,7 +413,6 @@ foreach my $name (sort {$DATA->{$a}{order} <=> $DATA->{$b}{order}} keys %{$DATA}
 			}
 			else {
 
-#				LOG($outBigLog, "MUHSPACESHIP! seqQ2R=$LGN$seqQ2R$N, temp=$seqQ2temp\n");
 				($seqQ2temp, $seqQ2G, $seqQ2R) = $seqQ2 =~ /^(.*)(.{$DATA->{$name}{gap}})(.{$lenQ2get})$/;
 				if (not defined $seqQ2temp) {
 					$seqQ2L = "";
@@ -336,7 +420,6 @@ foreach my $name (sort {$DATA->{$a}{order} <=> $DATA->{$b}{order}} keys %{$DATA}
 				}
 				else {
 					($seqQ2L, $seqQ2G, $seqQ2R) = $seqQ2 =~ /^(.*)(.{$DATA->{$name}{gap}})(.{$lenQ2get})$/;
-#					LOG($outBigLog, "MUHSPACESHIP! seqQ2L=LCY$seqQ2L$N, seqQ2G=$seqQ2G, seqQ2R=$LGN$seqQ2R$N\n");
 				}
 			}
 		}
@@ -490,14 +573,85 @@ foreach my $name (sort {$DATA->{$a}{order} <=> $DATA->{$b}{order}} keys %{$DATA}
 #	my ($newjunc) = fix_pos($junc, $DATA->{$name}{'seqTN_aln'}, $seqwants);
 #	LOG($outBigLog, "\n\n prev_junc=$DATA->{$name}{lenC1L}, junc_fix_pos = $LGN$junc_fix_pos$N\n\n");
 
+
+	my $testjunc1 = ""; my $testjunc2 = "";
+	if (length($seqTN) > 100) {
+		($testjunc1, $testjunc2) = $seqTN =~ /^(.{100})(.+)$/;
+		LOG($outBigLog, "SEQTN use 100! ($testjunc1)\n");
+	}
+	elsif (length($seqTN) > 200) {
+		($testjunc1, $testjunc2) = $seqTN =~ /^(.{200})(.+)$/;
+		LOG($outBigLog, "SEQTN use 200! ($testjunc1)\n");
+	}
+	elsif (length($seqTN) > 300) {
+		($testjunc1, $testjunc2) = $seqTN =~ /^(.{300})(.+)$/;
+		LOG($outBigLog, "SEQTN use 300! ($testjunc1)\n");
+	}
+	else {
+		($testjunc1) = $seqTN =~ /^(.+)$/;
+		$testjunc2 = "";
+		LOG($outBigLog, "SEQTN use ALL! ($testjunc1)\n");
+	}
+	my $lengthseqC1L = length($seqC1L) + 6;
+	LOG($outBigLog, "testjunc1=$testjunc1, length=" . length($testjunc1) . ", lengthseqC1l = " . $lengthseqC1L . "\n");
+	if (length($testjunc1) < $lengthseqC1L) {
+		LOG($outBigLog, "testjunc1 < length seqC1L\n");
+		my $lengthget = $lengthseqC1L;
+		$lengthget = length($seqTN) > $lengthget + 20 ? $lengthget + 20 : 
+						 length($seqTN) > $lengthget + 10 ? $lengthget + 10 :
+						 length($seqTN) > $lengthget +  5 ? $lengthget +  5 :
+						 length($seqTN) > $lengthget +  3 ? $lengthget +  3 :
+						 length($seqTN) > $lengthget +  1 ? $lengthget +  1 :
+						 length($seqTN) >= $lengthget +  0 ? $lengthget +  0 :
+						 length($seqTN) < $lengthget +  0 ? length($seqTN) : $lengthget;
+
+		($testjunc1, $testjunc2) = $seqTN =~ /^(.{$lengthget})(.*)$/;
+		($testjunc1) = $seqTN =~ /^(.{$lengthget})/ if not defined $testjunc1 or (defined $testjunc1 and $testjunc1 eq "");
+		$testjunc2 = "" if not defined $testjunc2;
+	}
+	else {
+		LOG($outBigLog, "testjunc1=" . length($testjunc1) . " > length seqC1L=" . $lengthseqC1L . "\n");
+	}
+
+#	@cmdTN = muscle(
+#">seqTN_aln\n$seqTN
+#>seqJN_aln\n$seqC1L
+#");
+
 	@cmdTN = muscle(
+">seqTN_aln\n$testjunc1
+>seqJN_aln\n$seqC1L
+");
+
+	($DATA->{$name}) = parse_fasta_simple($DATA->{$name}, \@cmdTN);
+	my $testjuncdash = join("", ("-") x length($testjunc2));
+	my $resjun1 = ">1_neg_$name\n$DATA->{$name}{'seqTN_aln'}$testjunc2\n>0_JUN_$name\n$DATA->{$name}{'seqJN_aln'}$testjuncdash";
+
+	LOG($outBigLog, "TESTJUNC:\n$resjun1\n");
+	my @resjun1 = split("\n", $resjun1);
+	my ($junc, $begdash, $dashes) = parse_aln(\@resjun1, "1_", "junc", undef, 1, $lenMaxL, $lenMaxR, $name, $DATA->{$name}{gap}, $outBigLog, $outLog, $namewant);
+
+	LOG($outBigLog, "testjunc1=" . colorize($testjunc1) . "\nJUNC=$junc\n");
+
+	if ($junc ne -1) {
+		LOG($outBigLog, "Junc is good! So use all testjunc1 ($testjunc1)\n");
+	#	$DATA->{$name}{'seqTN_aln'} .= $testjunc2;
+	}
+	else {
+		LOG($outBigLog, "Junc is -1 so use all seq\n");
+		@cmdTN = muscle(
 ">seqTN_aln\n$seqTN
 >seqJN_aln\n$seqC1L
 ");
-	($DATA->{$name}) = parse_fasta_simple($DATA->{$name}, \@cmdTN);
-	my $resjun1 = ">1_neg_$name\n$DATA->{$name}{'seqTN_aln'}\n>0_JUN_$name\n$DATA->{$name}{'seqJN_aln'}";
-	my @resjun1 = split("\n", $resjun1);
-	my ($junc, $begdash, $dashes) = parse_aln(\@resjun1, "1_", "junc", undef, 1, $lenMaxL, $lenMaxR, $name, $DATA->{$name}{gap}, $outBigLog, $outLog, $namewant);
+
+		($DATA->{$name}) = parse_fasta_simple($DATA->{$name}, \@cmdTN);
+
+		$resjun1 = ">1_neg_$name\n$DATA->{$name}{'seqTN_aln'}\n>0_JUN_$name\n$DATA->{$name}{'seqJN_aln'}";
+		LOG($outBigLog, "USEALL:\n$resjun1\n");
+		@resjun1 = split("\n", $resjun1);
+		($junc, $begdash, $dashes) = parse_aln(\@resjun1, "1_", "junc", undef, 1, $lenMaxL, $lenMaxR, $name, $DATA->{$name}{gap}, $outBigLog, $outLog, $namewant);
+	}
+
 
 	my $orig_junc = $junc;
 	$junc -= 1;
@@ -602,6 +756,10 @@ foreach my $name (sort {$DATA->{$a}{order} <=> $DATA->{$b}{order}} keys %{$DATA}
 		LOG($outBigLog, "2. endpos=$LGN$end_pos$N (after fix_pos() from seqTN to seqTN_aln) orig endpos=$LPR$orig_end_pos$N, adapter begdash=$begdash, dashes=$dashes\n"); #if $name eq $namewant;
 	}
 
+
+	my ($igtype, $junc1pos, $junc2pos) = get_igtype($DATA->{$name}{junc1pos}, $DATA->{$name}{junc2pos}, $chr2, $beg2, $end2, $strand2, $outBigLog);
+	$DATA->{$name}{igtype} = $igtype;
+
 #	LOG($outBigLog, "endpos=$end_pos, adapter begdash=$begdash, dashes=$dashes\n"); #if $name eq $namewant;
 	$beg_pos = -99 if not defined $beg_pos;
 	$end_pos = -99 if not defined $end_pos;
@@ -617,29 +775,37 @@ foreach my $name (sort {$DATA->{$a}{order} <=> $DATA->{$b}{order}} keys %{$DATA}
 	my $nexted = 0;
 	if ($beg_pos eq -99 and $end_pos eq -99) {
 		$nexted_bothshort ++;
-		$nexted_reason .= "\nINFO: $name strand1=$strand1 strand2=$strand2 is bothshort (beg_pos=$beg_pos, end_pos=$end_pos, junc=$junc)\n\n";
+		$nexted_reason .= "\n${LRD}NEXTED$N! INFO: $name strand1=$strand1 strand2=$strand2$LRD is bothshort $N(beg_pos=$beg_pos, end_pos=$end_pos, junc=$junc)\n\n";
 		$nexted = 1;
 	}
 	elsif ($beg_pos eq -99) {
 		$nexted_begshort ++;
-		$nexted_reason .= "\nINFO: $name strand1=$strand1 strand2=$strand2 is begshort (beg_pos=$beg_pos, end_pos=$end_pos, junc=$junc)\n\n";
+		$nexted_reason .= "\n${LRD}NEXTED$N! INFO: $name strand1=$strand1 strand2=$strand2$LRD is begshort $N(beg_pos=$beg_pos, end_pos=$end_pos, junc=$junc)\n\n";
 		$nexted = 1;
 	}
 	elsif ($end_pos eq -99) {
 		$nexted_endshort ++;
-		$nexted_reason .= "\nINFO: $name strand1=$strand1 strand2=$strand2 is endshort (beg_pos=$beg_pos, end_pos=$end_pos, junc=$junc)\n\n";
+		$nexted_reason .= "\n${LRD}NEXTED$N! INFO: $name strand1=$strand1 strand2=$strand2$LRD is endshort $N(beg_pos=$beg_pos, end_pos=$end_pos, junc=$junc)\n\n";
 		$nexted = 1;
 	}
 	elsif ($junc < 25) {
 		$nexted_juncmissing ++;
-		$nexted_reason .= "\nINFO: $name strand1=$strand1 strand2=$strand2 is juncmissing (beg_pos=$beg_pos, end_pos=$end_pos, junc=$junc)\n\n";
+		$nexted_reason .= "\n${LRD}NEXTED$N! INFO: $name strand1=$strand1 strand2=$strand2$LRD is juncmissing $N(beg_pos=$beg_pos, end_pos=$end_pos, junc=$junc)\n\n";
+		$nexted = 1;
+	}
+	elsif ($igtype !~ /(IgM|IgG1|IgG3)$/) {
+		$nexted_others ++;
+		$nexted_reason .= "\n${LRD}NEXTED$N! INFO: $name strand1=$strand1 strand2=$strand2$LRD is not at IgM/G1/G3$N (igtype=$LCY$igtype$N, beg_pos=$beg_pos, end_pos=$end_pos, junc=$junc)\n\n";
 		$nexted = 1;
 	}
 	else {
 		$okay{$name} = 1;
 		$good ++;
-		$nexted_reason .= "\nINFO: $name strand1=$strand1 strand2=$strand2 is good (beg_pos=$beg_pos, end_pos=$end_pos, junc=$junc)\n\n";
+		$nexted_reason .= "\nINFO: $name strand1=$strand1 strand2=$strand2$LGN is good$N (beg_pos=$beg_pos, end_pos=$end_pos, junc=$junc)\n\n";
 	}
+
+
+
 
 	my $unaligned_print = "";
 	$unaligned_print .= "------------------------------------------------\n";
@@ -665,14 +831,18 @@ foreach my $name (sort {$DATA->{$a}{order} <=> $DATA->{$b}{order}} keys %{$DATA}
 	LOG($outLog, $unaligned_print, "NA");
 #	LOG($outBigLog, "        THERE IS GAP ($YW$DATA->{$name}{gap}$N) SO ENDPOS GOTTEN USING MODIFIED JUNC (JUNC ($LGN$junc$N) + GAP ($YW$DATA->{$name}{gap}$N) = $LGN$end_pos$N)\n") if $DATA->{$name}{gap} > 0;
 #	LOG($outLog, "        THERE IS GAP ($YW$DATA->{$name}{gap}$N) SO ENDPOS GOTTEN USING MODIFIED JUNC (JUNC ($LGN$junc$N) + GAP ($YW$DATA->{$name}{gap}$N) = $LGN$end_pos$N)\n","NA") if $DATA->{$name}{gap} > 0;
+
 	next if $nexted eq 1;
+
+	LOG($outBigLog, "HERE1\n");
 
 	my $colorpos1 = $strand1 eq "+" ? "${LGN}$beg1${N}-$end1" : "$beg1-${LGN}$end1${N}";
 	my $colorpos2 = $strand2 eq "+" ? "${LGN}$beg2${N}-$end2" : "$beg2-${LGN}$end2${N}";
-	my ($igtype, $junc1pos, $junc2pos) = get_igtype($DATA->{$name}{junc1pos}, $DATA->{$name}{junc2pos}, $chr2, $beg2, $end2, $strand2, $outBigLog);
-	$DATA->{$name}{igtype} = $igtype;
-#	LOG($outBigLog, "\n\n" . date() . "${LGN}Aligning CONS, BAIT, READ, and PREY sequences!${N}\nIGTYPE=$LRD$igtype${N}, name=${LCY}$name${N}, beg0/junc/end0=$beg_pos/$junc/$end_pos (primer/adapter=$primer_pos/$adapter_pos, fixed=$primer_pos_fix/$adapter_pos_fix), (REF1=$chr1:$colorpos1;length1=$lenz1;junc1=${LGN}$begJ1${N}, REF2=$chr2:$colorpos2;length2=$lenz2;junc2=${LGN}$begJ2${N})\n\n",$NA);
 
+	#my ($igtype, $junc1pos, $junc2pos) = get_igtype($DATA->{$name}{junc1pos}, $DATA->{$name}{junc2pos}, $chr2, $beg2, $end2, $strand2, $outBigLog);
+#	$DATA->{$name}{igtype} = $igtype;
+#	LOG($outBigLog, "\n\n" . date() . "${LGN}Aligning CONS, BAIT, READ, and PREY sequences!${N}\nIGTYPE=$LRD$igtype${N}, name=${LCY}$name${N}, beg0/junc/end0=$beg_pos/$junc/$end_pos (primer/adapter=$primer_pos/$adapter_pos, fixed=$primer_pos_fix/$adapter_pos_fix), (REF1=$chr1:$colorpos1;length1=$lenz1;junc1=${LGN}$begJ1${N}, REF2=$chr2:$colorpos2;length2=$lenz2;junc2=${LGN}$begJ2${N})\n\n",$NA);
+#						my $igtypeprint = $igtype =~ /IgM$/ ? "IgM" : $igtype =~ /IgG1$/ ? "IgG1" : $igtype =~ /IgG3$/ ? "IgG3" : $igtype;
 	my $lochash1;
 
 	my $resTNs1 = 
@@ -715,14 +885,21 @@ foreach my $name (sort {$DATA->{$a}{order} <=> $DATA->{$b}{order}} keys %{$DATA}
 
 =cut
 
+	LOG($outBigLog, "HERE2\n");
+
 	LOG($outBigLog, "${YW}------------------------------------------------\n6a. Tabulating mutation from seqQ1 (Read pair #1)\n------------------------------------------------${N}\n" . date() . "\n",$NA);
 	LOG($outLog, "${YW}------------------------------------------------\n6a. Tabulating mutation from seqQ1 (Read pair #1)\n------------------------------------------------${N}\n" . date() . "\n","NA");
 
 	foreach my $mutpos (sort keys %{$muthash}) {
+		my $mutposcurr = $mutpos;
 		my $mut1 = $muthash->{$mutpos}{1}; $mut1 = "none" if not defined $mut1;
 		my ($type1, $type2) = $mut1 =~ /^(ins|del|mat|mis|mh)_(.+)$/;
-		DIELOG($outBigLog, "Can't find type1 from mutpos=$mutpos mut=$mut1; not ins/del/mat/mis/mh_?\n\n") if not defined $type1;
-		push(@{$lochash1->{$type1}{$type2}{arr}}, $mutpos);
+		if ($type1 eq "mh") {
+			$type2 = $DATA->{$name}{mhseq};
+			$mutposcurr = $DATA->{$name}{mhbeg};
+		}
+		DIELOG($outBigLog, "Can't find type1 from mutpos=$mutpos mutposcurr=$mutposcurr mut=$mut1; not ins/del/mat/mis/mh_?\n\n") if not defined $type1;
+		push(@{$lochash1->{$type1}{$type2}{arr}}, $mutposcurr);
 	}
 	foreach my $type1 (sort keys %{$lochash1}) {
 		foreach my $type2 (sort keys %{$lochash1->{$type1}}) {
@@ -732,7 +909,6 @@ foreach my $name (sort {$DATA->{$a}{order} <=> $DATA->{$b}{order}} keys %{$DATA}
 			LOG($outBigLog, "$type1\t$type2\t$lochash1->{$type1}{$type2}{join}\n");
 		}
 	}
-	
 	my $begorig1 = $DATA->{$name}{begorig1};
 	my $endorig1 = $DATA->{$name}{endorig1};
 	my $begorig2 = $DATA->{$name}{begorig2};
@@ -740,11 +916,16 @@ foreach my $name (sort {$DATA->{$a}{order} <=> $DATA->{$b}{order}} keys %{$DATA}
 
 	my $seqCON_orig = $DATA->{$name}{'seqCON_aln'};
 	$seqCON_orig =~ s/\-//g;
+
 	my %temp; my @temp; my $lastmutpos = -1;
 	my $juncposfix = fix_pos2($DATA->{$name}{junc}, $DATA->{$name}{'seqCON_aln'}, $seqCON_orig, $outBigLog);
 	$temp[$juncposfix] = "J";
-	open (my $outztemp, ">", "outztemp.bed.temp") or die;
-	open (my $outzfix, ">", "outzfix.bed.temp") or die;
+
+#
+#my $outzfixFile = $outFile . ".outzfix.bed.temp";
+#my $outztempFile = $outFile . ".outztemp.bed.temp";
+#my $outzfaFile = $outFile . ".outztemp.fa";
+
 	my %coorz;
 	my $begB6 = 114485808;
 	my $endB6 = 117249165;
@@ -755,17 +936,33 @@ foreach my $name (sort {$DATA->{$a}{order} <=> $DATA->{$b}{order}} keys %{$DATA}
 	my $IgG3beg = 114594436;
 	my $IgG3end = 114609628;
 	my $printzfix;
-	foreach my $type1 (sort keys %{$lochash1}) {
-		foreach my $type2 (sort keys %{$lochash1->{$type1}}) {
-			my @arr = @{$lochash1->{$type1}{$type2}{arr}};
-			@arr = sort {$a <=> $b} @arr;
-			$lochash1->{$type1}{$type2}{join} = join(",", @arr);
-#			LOG($outBigLog, "$type1\t$type2\t$lochash1->{$type1}{$type2}{join}\n");
-#			if ($name eq "M02034:489:000000000-CYYL8:1:1101:12761:3410" and $type1 eq "mat" and $type2 eq "A_A") {
-#				LOG($outBigLog, "FIX_POS1\n");
-#				my $mutpos1 = fix_pos($lochash1->{$type1}{$type2}{join}, $DATA->{$name}{'seqCON_aln'}, $seqCON_orig);#, $outBigLog);
-#				LOG($outBigLog, "FIX_POS2\n");
-				my $mutpos2 = fix_pos2($lochash1->{$type1}{$type2}{join}, $DATA->{$name}{'seqCON_aln'}, $seqCON_orig);#, $outBigLog);
+
+	LOG($outBigLog, "HERE3\n");
+
+# HERE
+
+	my %fix;
+	$fix{try} = 0;
+	$fix{changed} = 0;
+	$fix{total} = 0;
+	$fix{add} = 0; # add to begind1
+	$fix{best} = "INIT";
+	$fix{bestchanged} = "INIT";
+#	my @add = (0, -1, 1, -2, 2, -3, 3, -4, 4, -5, 5,-6, 6, -7, 7);
+	my $fix_add = 0;
+
+#=comment
+	for (my $try = 0; $try < @add; $try ++){
+		$fix{add} = $add[$try];
+		foreach my $type1 (sort keys %{$lochash1}) {
+			foreach my $type2 (sort keys %{$lochash1->{$type1}}) {
+				my @arr = @{$lochash1->{$type1}{$type2}{arr}};
+				@arr = sort {$a <=> $b} @arr;
+				$lochash1->{$type1}{$type2}{join} = join(",", @arr);
+
+#				LOG($outBigLog, "$type1\t$type2\t$lochash1->{$type1}{$type2}{join}\n");
+
+				my $mutposcurr = fix_pos2($lochash1->{$type1}{$type2}{join}, $DATA->{$name}{'seqCON_aln'}, $seqCON_orig);#, $outBigLog);
 				my $nuc = ".";
 				if ($type1 eq "mat" or $type1 eq "mis") {
 					my ($nuc1, $nuc2) = split("_", $type2);
@@ -778,160 +975,502 @@ foreach my $name (sort {$DATA->{$a}{order} <=> $DATA->{$b}{order}} keys %{$DATA}
 					$nuc = $type2 if $type1 eq "del";
 					$nuc = "H" if $type1 eq "mh";
 				}
-				my @mutposfix = split(",", $mutpos2);
-				for (my $i = 0; $i < @mutposfix; $i++) {
-					my $ind = $mutposfix[$i];
-					if ($ind <= $juncposfix) { #IGM
-						my $begind1 = $strand1 eq "+" ? $begorig1 + $ind : $endorig1 - $ind - 1;
-						my $endind1 = $strand1 eq "+" ? $begorig1 + $ind + 1 : $endorig1 - $ind;
-						$coorz{ind1} = $ind if not defined $coorz{ind1};
-						$coorz{ind1} = $ind if $ind < $coorz{ind1};
-						$coorz{begind1} = $begind1 if not defined $coorz{begind1};
-						$coorz{begind1} = $begind1 if $begind1 < $coorz{begind1};
-						$coorz{endind1} = $endind1 if not defined $coorz{endind1};
-						$coorz{endind1} = $endind1 if $endind1 > $coorz{endind1};
-						my $endind1print = $IgMend - $begind1;
-						my $begind1print = $IgMend - $endind1;
-						if ($strand1 eq "+") {
-							$begind1print = $IgMbeg + $begind1;
-							$endind1print = $IgMbeg + $endind1;
-						}
-#						my $endind1print = $endind1 - $IgMbeg;#$IgMend - $begind1;
-#						my $begind1print = $begind1 - $IgMbeg;#$IgMend - $endind1;
-#						my $begind1print = $IgMend - $begind1;# - $begB6;
-#						my $endind1print = $IgMend - $endind1;# - $begB6;
-#						my $begind1print = $endB6 - $begind1;
-#						my $endind1print = $endB6 - $endind1;
-#						$begind1print -= $begB6;
-#						$endind1print -= $begB6;
-						#if ($tyep1 ne "mat") {
-						if (defined $printzfix->{$begind1print}) {
-							die "Already defined begind1print=$begind1print!\n";
-						}
-#						my $igtypeprint = $igtype =~ /IgM$/ ? "IgM" : $igtype =~ /IgG1$/ ? "IgG1" : $igtype =~ /IgG3$/ ? "IgG3" : $igtype;
-						$printzfix->{$begind1print} .= "NG_005838.1\t$begind1print\t$endind1print\tIgM;$type1;$type2;$ind\t0\t$strand1\n";
-#						LOG($outBigLog, "NG_005838.1\t$begind1print\t$endind1print\t$type1;$type2;$ind\t0\t$strand2\n");
-						#}
-					}
-					else {
-						my $begind2 = $strand2 eq "+" ? $begorig2 + (-1 * $ind + $juncposfix + $mhlen)    : $endorig2 - ($ind - $juncposfix - 1) - 1;
-						my $endind2 = $strand2 eq "+" ? $begorig2 + (-1 * $ind + $juncposfix + $mhlen) + 1: $endorig2 - ($ind - $juncposfix - 1);
-						$coorz{ind2} = $ind if not defined $coorz{ind2};
-						$coorz{ind2} = $ind if $ind < $coorz{ind2};
-						$coorz{begind2} = $begind2 if not defined $coorz{begind2};
-						$coorz{begind2} = $begind2 if $begind2 < $coorz{begind2};
-						$coorz{endind2} = $endind2 if not defined $coorz{endind2};
-						$coorz{endind2} = $endind2 if $endind2 > $coorz{endind2};
-#						my $begind2print = $begind2 - $begB6;
-#						my $endind2print = $endind2 - $begB6;
-#						my $begind2print = $endB6 - $begind2;
-#						my $endind2print = $endB6 - $endind2;
+				my @mutposcurr = split(",", $mutposcurr);
+
+				for (my $ki = 0; $ki < @mutposcurr; $ki++) {
+					my $ind = $mutposcurr[$ki];
+					if ($ind > $juncposfix) { #not IGM
+					LOG($outBigLog, "\tki=$LCY$ki$N, actual pos = $LPR$ind$N, $LGN try # $fix{try}:$YW Trying add=$fix{add}$N\n","NA");
+						$fix{total} ++;
+						my $begind2 = $strand2 eq "+" ? $begorig2 + ($ind - $juncposfix + $mhlen) - 1: $endorig2 - ($ind - $juncposfix - 1) - 1;
+						my $endind2 = $strand2 eq "+" ? $begorig2 + ($ind - $juncposfix + $mhlen) - 0: $endorig2 - ($ind - $juncposfix - 1);
+#						$coorz{ind2} = $ind if not defined $coorz{ind2};
+#						$coorz{ind2} = $ind if $ind < $coorz{ind2};
+#						$coorz{begind2} = $begind2 if not defined $coorz{begind2};
+#						$coorz{begind2} = $begind2 if $begind2 < $coorz{begind2};
+#						$coorz{endind2} = $endind2 if not defined $coorz{endind2};
+#						$coorz{endind2} = $endind2 if $endind2 > $coorz{endind2};
 						my $igtypeprint = $igtype =~ /IgM$/ ? "IgM" : $igtype =~ /IgG1$/ ? "IgG1" : $igtype =~ /IgG3$/ ? "IgG3" : $igtype;
 						my $endind2print = $igtypeprint eq "IgM" ? $IgMend - $begind2 : $igtypeprint eq "IgG1" ? $IgG1end - $begind2 : $igtypeprint eq "IgG3" ? $IgG3end - $begind2 : $begind2;
 						my $begind2print = $igtypeprint eq "IgM" ? $IgMend - $endind2 : $igtypeprint eq "IgG1" ? $IgG1end - $endind2 : $igtypeprint eq "IgG3" ? $IgG3end - $endind2 : $endind2;
 						my $igmtouse = $igtypeprint eq "IgM" ? "IGMEND=IgMend-$begind2" : $igtypeprint eq "IgG1" ? "IGG1end=$IgG1end-$begind2" : $igtypeprint eq "IgG3" ? "IGG3end=$IgG3end-$begind2" : "UNKNOWN";
-#						if ($strand2 eq "+") {
-#							$begind2print = $igtypeprint eq "IgM" ? -1 * $IgMbeg + $begind2 : $igtypeprint eq "IgG1" ? -1 * $IgG1beg + $begind2 : $igtypeprint eq "IgG3" ? -1 * $IgG3beg + $begind2 : $begind2;
-#							$endind2print = $igtypeprint eq "IgM" ? -1 * $IgMbeg + $endind2 : $igtypeprint eq "IgG1" ? -1 * $IgG1beg + $endind2 : $igtypeprint eq "IgG3" ? -1 * $IgG3beg + $endind2 : $endind2;
-#							$igmtouse = $igtypeprint eq "IgM" ? "IGMBEG=-1*IgMbeg+$begind2" : $igtypeprint eq "IgG1" ? "IGG1BEG=-1*$IgG1beg+$begind2" : $igtypeprint eq "IgG3" ? "IGG3BEG=-1*$IgG3beg+$begind2" : "UNKNOWN";
-#						}
-#						my $begind2print = $igtypeprint eq "IgM" ? (-1 * $IgMbeg) + $endind2 : $igtypeprint eq "IgG1" ? (-1 * $IgG1beg) + $endind2 : $igtypeprint eq "IgG3" ? (-1 * $IgG3beg) + $endind2 : $endind2;
-#						my $endind2print = $igtypeprint eq "IgM" ? (-1 * $IgMbeg) + $begind2 : $igtypeprint eq "IgG1" ? (-1 * $IgG1beg) + $begind2 : $igtypeprint eq "IgG3" ? (-1 * $IgG3beg) + $begind2 : $begind2;
-#						$begind2print -= $begB6;
-#						$endind2print -= $begB6;
-						if (defined $printzfix->{$begind2print}) {
-							die "Already defined begind2print=$begind2print!\n";
+						my $constype1 = $cons{$igtypeprint}{1}{$begind2print+$fix{add}}{type1}; $constype1 = "UNDEF_constype1" if not defined $constype1;
+						my $constype2 = $cons{$igtypeprint}{1}{$begind2print+$fix{add}}{type2}; $constype2 = "UNDEF_constype2" if not defined $constype2;
+						my ($cons_fix, $printzfix2);
+						$printzfix2 = "";
+						($cons_fix, $constype2, $printzfix2) = check_cons_fix($type1, $type2, $constype1, $constype2, $printzfix2, \%cons, $begind2print, $igtypeprint, $strand2, $fix{add});
+						if ($cons_fix =~ /(CHANGE|BAD)/) {
+							$fix{changed} ++;
 						}
-						$printzfix->{$begind2print} .= "AJ851868.3\t$begind2print\t$endind2print\t$igtypeprint;$type1;$type2;$ind\t0\t$strand2\t$igtypeprint\t$igmtouse\n";
-#						LOG($outBigLog, "AJ851868.3\t$begind2print\t$endind2print\t$type1;$type2;$ind\t0\t$strand2\n");
-					}
-					$lastmutpos = $ind if $lastmutpos < $ind;
-					if (defined $temp[$ind]) {
-						$temp{$ind} = $temp[$ind] if not defined $temp{$ind};
-						$temp{$ind} .= ",$nuc";
-					}
-					else {
-						$temp[$ind] = $nuc;
+						LOG($outBigLog, "\tFIX AJ851868.3\t$begind2print\t$endind2print\t$igtypeprint;$type1;$type2;$ind\t0\t$strand2\t$igtypeprint\t$constype1,$constype2\t$cons_fix\tfix try=$fix{try}, fix_add=$fix{add}\n","NA");
+						LOG($outBigLog, "\tcons fix = $cons_fix\n","NA");
 					}
 				}
-#			}
+			}
+		}
+		if ($fix{best} eq "INIT") {
+			$fix{best} = $fix{add};
+			$fix{bestchange} = $fix{changed};
+			LOG($outBigLog, "0. fix best = $fix{best}, fix add=$fix{add}, bestchanged= $fix{bestchange} < changed=$fix{changed}}\n");
+		}
+		elsif ($fix{bestchange} > $fix{changed}) {
+			$fix{best} = $fix{add};
+			$fix{bestchange} = $fix{changed};
+			LOG($outBigLog, "1. fix best = $fix{best}, fix add=$fix{add}, bestchanged= $fix{bestchange} < changed=$fix{changed}}\n");
+		}
+		else {
+			LOG($outBigLog, "2. try=$try, fix best = $fix{best}, fix add=$fix{add}, bestchanged= $fix{bestchange} < changed=$fix{changed}}\n") if $try % 20 == 0;
+		}
+		if ($try == @add - 1 or $fix{total} < 3 or ($fix{total} > 0 and $fix{changed} / $fix{total} <= 0.1)) {
+			my $perc = $fix{total} == 0 ? "N/A" : int(1000 * $fix{changed}/$fix{total})/10;
+			LOG($outBigLog, "\t$LGN GOOD at try # $LPR$fix{try}$N!\n","NA") if $try ne @add - 1;
+			LOG($outBigLog, "\t$LGN CANT FIND at try # $LPR$fix{try}$N!\n","NA") if $try eq @add - 1;
+			LOG($outBigLog, "\t  fix total = $LGN$fix{total}$N\n","NA");
+			LOG($outBigLog, "\t  fix changed = $LGN$fix{changed}$N\n","NA");
+			LOG($outBigLog, "\t  fix perc = $LGN$perc$N\n\n","NA");
+			LOG($outBigLog, "fix best = $fix{best}, changed= $fix{bestchange}\n");
+			last;
+		}
+		else {
+			$fix{try} ++;
+			$fix{changed} = 0;
+			$fix{total} = 0;
 		}
 	}
+	$fix{add} = $fix{best};
+	$fix_add = $fix{best};
+	my $fix_perc = $fix{total} == 0 ? "${YW}N/A$N" : int(1000*$fix{changed}/$fix{total})/10;
+	LOG($outBigLog, ">FIX_ADD $YW$name$N fix_add = $fix_add, changed = $fix{changed}, try=$fix{try}, perc changed = $LGN$fix_perc$N\n");
+#=cut
+
+
+
+# dump typehash1
+my $printhash1 = "";
+foreach my $type1 (sort keys %{$typehash1}) {
+	foreach my $type2 (sort keys %{$typehash1->{$type1}}) {
+		if ($typehash1->{$type1}{$type2} =~ /HASH/) {
+			my $typehash1temp = $typehash1->{$type1}{$type2};
+			foreach my $key (sort keys %{$typehash1temp}) {
+				$printhash1 .= "type1=$LCY$type1$N, type2=$LGN$type2$N, key=$key value=$LPR$typehash1->{$type1}{$type2}{$key}$N\n";
+			}
+		}
+		else {
+			$printhash1 .= "type1=$LCY$type1$N, type2=$LGN$type2$N, value=$LPR$typehash1->{$type1}{$type2}$N\n";
+		}
+	}
+}
+$printhash1 .= "\n\n";
+
+	my $lochashfinal;
+	my $maxind = 0;
+	foreach my $type1 (sort keys %{$lochash1}) {
+		foreach my $type2 (sort keys %{$lochash1->{$type1}}) {
+			my @arr = @{$lochash1->{$type1}{$type2}{arr}};
+			@arr = sort {$a <=> $b} @arr;
+			$lochash1->{$type1}{$type2}{join} = join(",", @arr);
+
+			#LOG($outBigLog, "FIX_POS2\n");
+			my $mutposcurr = fix_pos2($lochash1->{$type1}{$type2}{join}, $DATA->{$name}{'seqCON_aln'}, $seqCON_orig);#, $outBigLog);
+			#LOG($outBigLog, "$type1\t$type2\t$lochash1->{$type1}{$type2}{join}\t$mutposcurr\n");
+
+			my $nuc = ".";
+			if ($type1 eq "mat" or $type1 eq "mis") {
+				my ($nuc1, $nuc2) = split("_", $type2);
+				$nuc = $nuc1;
+				$nuc = uc($nuc1) if $type1 eq "mat";
+				$nuc = lc($nuc2) if $type1 eq "mis";
+			}
+			else {
+				$nuc = "I" if $type1 eq "ins";
+				$nuc = $type2 if $type1 eq "del";
+				$nuc = "H" if $type1 eq "mh";
+			}
+
+			my @mutposorig = @arr;
+			my @mutposorig2 = @arr;
+			my @mutposcurr = split(",", $mutposcurr);
+			my @mutposcurr2 = split(",", $mutposcurr);
+			#my $fix_add = $fix{add};
+			for (my $ki = 0; $ki < @mutposorig; $ki++) {
+				$mutposorig2[$ki] += $fix_add;
+				$mutposcurr2[$ki] += $fix_add;
+			}
+			#$lochash1->{$type1}{$type2}{arr} = \@mutposorig2;
+			#LOG($outBigLog, "mutposorig before = " . join(",", @mutposorig) . ";$LGN fix_add=$fix_add$N after = " . join(",", @mutposorig2) . "\n");
+			#LOG($outBigLog, "mutposcurr before = " . join(",", @mutposcurr) . ";$LGN fix_add=$fix_add$N after = " . join(",", @mutposcurr2) . "\n");
+			for (my $ki = 0; $ki < @mutposcurr; $ki++) {
+				my $ind = $mutposcurr[$ki];
+				$maxind = $ind if $maxind < $ind;
+			}
+		}
+	}
+
+	foreach my $type1 (sort keys %{$lochash1}) {
+		foreach my $type2 (sort keys %{$lochash1->{$type1}}) {
+			my @arr = @{$lochash1->{$type1}{$type2}{arr}};
+			@arr = sort {$a <=> $b} @arr;
+			$lochash1->{$type1}{$type2}{join} = join(",", @arr);
+
+			#LOG($outBigLog, "FIX_POS2\n");
+			my $mutposcurr = fix_pos2($lochash1->{$type1}{$type2}{join}, $DATA->{$name}{'seqCON_aln'}, $seqCON_orig);#, $outBigLog);
+			#LOG($outBigLog, "$type1\t$type2\t$lochash1->{$type1}{$type2}{join}\t$mutposcurr\n");
+
+			my $nuc = ".";
+			if ($type1 eq "mat" or $type1 eq "mis") {
+				my ($nuc1, $nuc2) = split("_", $type2);
+				$nuc = $nuc1;
+				$nuc = uc($nuc1) if $type1 eq "mat";
+				$nuc = lc($nuc2) if $type1 eq "mis";
+			}
+			else {
+				$nuc = "I" if $type1 eq "ins";
+				$nuc = $type2 if $type1 eq "del";
+				$nuc = "H" if $type1 eq "mh";
+			}
+
+			my @mutposorig = @arr;
+			my @mutposorig2 = @arr;
+			my @mutposcurr = split(",", $mutposcurr);
+			my @mutposcurr2 = split(",", $mutposcurr);
+			my $fix_add = $fix{add};
+			for (my $ki = 0; $ki < @mutposorig; $ki++) {
+				$mutposorig2[$ki] += $fix_add;
+				$mutposcurr2[$ki] += $fix_add;
+			}
+			$lochash1->{$type1}{$type2}{arr} = \@mutposorig2;
+			LOG($outBigLog, "mutposorig before = " . join(",", @mutposorig) . ";$LGN fix_add=$fix_add$N after = " . join(",", @mutposorig2) . "\n");
+			LOG($outBigLog, "mutposcurr before = " . join(",", @mutposcurr) . ";$LGN fix_add=$fix_add$N after = " . join(",", @mutposcurr2) . "\n");
+			my $lastbegind1print = "";
+#				LOG($outBigLog, ">$LCY ki = $ki = $ind$N\n");
+			for (my $ki = 0; $ki < @mutposcurr; $ki++) {
+				my $ind = $mutposcurr[$ki];
+#				LOG($outBigLog, ">$LCY ki = $ki = $ind$N\n");
+				if ($ind <= $juncposfix) { #IGM
+					my $begind1 = $strand1 eq "+" ? $begorig1 + $ind : $endorig1 - $ind - 1;
+					my $endind1 = $strand1 eq "+" ? $begorig1 + $ind + 1 : $endorig1 - $ind;
+					$coorz{ind1} = $ind if not defined $coorz{ind1};
+					$coorz{ind1} = $ind if $ind < $coorz{ind1};
+					$coorz{begind1} = $begind1 if not defined $coorz{begind1};
+					$coorz{begind1} = $begind1 if $begind1 < $coorz{begind1};
+					$coorz{endind1} = $endind1 if not defined $coorz{endind1};
+					$coorz{endind1} = $endind1 if $endind1 > $coorz{endind1};
+					my $endind1print = $IgMend - $begind1;
+					my $begind1print = $IgMend - $endind1;
+					if ($strand1 eq "+") {
+						$begind1print = $IgMbeg + $begind1;
+						$endind1print = $IgMbeg + $endind1;
+					}
+#					my $endind1print = $endind1 - $IgMbeg;#$IgMend - $begind1;
+#					my $begind1print = $begind1 - $IgMbeg;#$IgMend - $endind1;
+#					my $begind1print = $IgMend - $begind1;# - $begB6;
+#					my $endind1print = $IgMend - $endind1;# - $begB6;
+#					my $begind1print = $endB6 - $begind1;
+#					my $endind1print = $endB6 - $endind1;
+#					$begind1print -= $begB6;
+#					$endind1print -= $begB6;
+					#if ($tyep1 ne "mat") {
+					if (defined $printzfix->{$begind1print} and $printzfix->{$begind1print} !~ /;ins/) {
+#						$printzfix->{$begind1print} .= "\ni=$ki, mutposcurr=$mutposcurr[$ki], ind=$ind, type1=$type1, type2=$type2, Already defined begind1print=$begind1print above!\n" if $strand1 eq "+";
+#						LOG($outBigLog, "\ni=$ki, mutposcurr=$mutposcurr[$ki], ind=$ind, type1=$type1, type2=$type2, Already defined begind1print=$begind1print above!\n");
+					}
+					else {
+#						$printzfix->{$begind1print} .= "1 beg1indprint=$begind1print, i=$ki, mutposcurr=$mutposcurr[$ki], ind=$ind, type1=$type1, type2=$type2\n" if $strand1 eq "+";
+#						LOG($outBigLog, "\ni=$ki, mutposcurr=$mutposcurr[$ki], ind=$ind, type1=$type1, type2=$type2\n");
+					}
+#					my $igtypeprint = $igtype =~ /IgM$/ ? "IgM" : $igtype =~ /IgG1$/ ? "IgG1" : $igtype =~ /IgG3$/ ? "IgG3" : $igtype;
+
+
+					my @checkmh = (0,-1,-2,1,2);
+					my ($constype1, $constype2, $cons_fix, $printzfix2);
+					if ($type1 eq "mh") {
+						my $mh_fix_add = 0;
+						for (my $kj = 0; $kj < @checkmh; $kj++) {
+							$constype1 = $cons{IgM}{1}{$begind1print+$checkmh[$kj]}{type1}; $constype1 = "UNDEF_constype1" if not defined $constype1;
+							$constype2 = $cons{IgM}{1}{$begind1print+$checkmh[$kj]}{type2}; $constype2 = "UNDEF_constype2" if not defined $constype2;
+							next if not defined $constype1;
+							$printzfix2 = $printzfix->{$begind1print};
+							($cons_fix, $constype2, $printzfix2) = check_cons_fix($type1, $type2, $constype1, $constype2, $printzfix2, \%cons, $begind1print, "IgM", $strand1, $checkmh[$kj]);
+							my $origcons_fix = $cons_fix; $origcons_fix =~ s/[ ]+/_/g;
+							$cons_fix = $cons_fix =~ /GOOD/ ? $LGN . $cons_fix . $N : $cons_fix =~ /BAD/ ? $LRD . $cons_fix . $N : $LCY. $cons_fix . $N;
+							if ($cons_fix =~ /GOOD/) {
+								$mh_fix_add = $checkmh[$kj];
+								$printzfix->{$begind1print} = $printzfix2;
+								$printzfix->{$begind1print} .= "NG_005838.1\t$begind1print\t$endind1print\tIgM;$type1;$type2;$ind\t0\t$strand1\tIgM\t$constype1,$constype2\t$cons_fix\tfix_add=$mh_fix_add\n";
+#								print $outloc "$name\tBAIT\tNG_005838.1\t$begind1print\t$endind1print\tIgM;$type1;$type2;$ind\t0\t$strand1\tIgM\t$constype1\t$constype2\t$origcons_fix\t$mh_fix_add\n";
+								print $outloc "NG_005838.1_IgM\t$begind1print\t$endind1print\t$type1\_$type2\t0\t$strand1\tmutorig=$type1\_$type2;change=$origcons_fix;constype=$constype1\_$constype2;name=$name;type=BAIT;ig=IgM;fix_add=$mh_fix_add;ki=$ki;mutposorig=$mutposorig2[$ki];mutposcurr=$mutposcurr2[$ki];coor=chr12\_$begind1\_$endind1\_$name,IgM\_0\_$strand1\n";
+								last;
+							}
+							else {
+#								$printzfix->{$begind1print} .= "\tMH i=$kj, type1_type2=$type1\_$type2, constype1=$constype1, constype2=$constype2, cons_fix=$LPR$cons_fix$N,checkmh=$LPR$checkmh[$kj]$N\n";
+							}
+						}
+#						$printzfix->{$begind1print} .= "NG_005838.1\t$begind1print\t$endind1print\tIgM;$type1;$type2;$ind\t0\t$strand1\tIgM\t$constype1,$constype2\t$cons_fix\tfix_add=$mh_fix_add\n";
+					}
+					else {
+						$constype1 = $cons{IgM}{1}{$begind1print}{type1}; $constype1 = "UNDEF_constype1" if not defined $constype1;
+						$constype2 = $cons{IgM}{1}{$begind1print}{type2}; $constype2 = "UNDEF_constype2" if not defined $constype2;
+						$printzfix2 = $printzfix->{$begind1print};
+						($cons_fix, $constype2, $printzfix2) = check_cons_fix($type1, $type2, $constype1, $constype2, $printzfix2, \%cons, $begind1print, "IgM", $strand1, 0);
+						my ($change, $ctype1, $ctype2) = ("", $type1, $type2);
+						if ($cons_fix =~ /CHANGE/ and $cons_fix !~ /DONT/) {
+							($change, $ctype1, $ctype2) = $cons_fix =~ /^(CHANGE) ([A-Za-z0-9]+)_(.+)$/;
+							$printzfix2 .= "\t$LRD ctype1 or 2 undefined! cons_fix=$cons_fix\n" if not defined $ctype1 or not defined $ctype2;
+							$ctype1 = "NA" if not defined $ctype1; 
+							$ctype2 = "NA" if not defined $ctype2;
+							$printzfix2 .= "\t$YW>Changing $LGN$type1 $type2$N into $LPR$ctype1 $ctype2$N\n" if defined $ctype1 and defined $ctype2;
+							$typehash1->{$type1}{$type2} --;
+							$typehash1->{$ctype1}{$ctype2} ++;
+							if ($typehash1->{$type1}{$type2} == 0) {
+								undef $typehash1->{$type1}{$type2};
+								delete $typehash1->{$type1}{$type2};
+							}
+						}
+						my $origcons_fix = $cons_fix; $origcons_fix =~ s/[ ]+/_/g;
+						$cons_fix = $cons_fix =~ /GOOD/ ? $LGN . $cons_fix . $N : $cons_fix =~ /BAD/ ? $LRD . $cons_fix . $N : $LCY. $cons_fix . $N;
+						$printzfix->{$begind1print} = $printzfix2;
+						$printzfix->{$begind1print} .= "NG_005838.1\t$begind1print\t$endind1print\tIgM;$type1;$type2;$ind\t0\t$strand1\tIgM\t$constype1,$constype2\t$cons_fix\t0\n";
+#						print $outloc "$name\tBAIT\tNG_005838.1\t$begind1print\t$endind1print\tIgM;$type1;$type2;$ind\t0\t$strand1\tIgM\t$constype1\t$constype2\t$origcons_fix\n";
+						print $outloc "NG_005838.1_IgM\t$begind1print\t$endind1print\t$ctype1\_$ctype2\t0\t$strand1\tmutorig=$type1\_$type2;change=$origcons_fix;constype=$constype1\_$constype2;name=$name;type=BAIT;ig=IgM;fix_add=0;ki=$ki;mutposorig=$mutposorig2[$ki];mutposcurr=$mutposcurr2[$ki];coor=chr12\_$begind1\_$endind1\_$name,IgM\_0\_$strand1\n";
+					}
+					$lastbegind1print = $begind1print;
+#					LOG($outBigLog, "NG_005838.1\t$begind1print\t$endind1print\t$type1;$type2;$ind\t0\t$strand2\n");
+					#}
+				}
+				else {
+					my $begind2 = $strand2 eq "+" ? $begorig2 + ($ind - $juncposfix + $mhlen) - 1: $endorig2 - ($ind - $juncposfix - 1) - 1;
+					my $endind2 = $strand2 eq "+" ? $begorig2 + ($ind - $juncposfix + $mhlen) - 0: $endorig2 - ($ind - $juncposfix - 1);
+					$coorz{ind2} = $ind if not defined $coorz{ind2};
+					$coorz{ind2} = $ind if $ind < $coorz{ind2};
+					$coorz{begind2} = $begind2 if not defined $coorz{begind2};
+					$coorz{begind2} = $begind2 if $begind2 < $coorz{begind2};
+					$coorz{endind2} = $endind2 if not defined $coorz{endind2};
+					$coorz{endind2} = $endind2 if $endind2 > $coorz{endind2};
+					my $igtypeprint = $igtype =~ /IgM$/ ? "IgM" : $igtype =~ /IgG1$/ ? "IgG1" : $igtype =~ /IgG3$/ ? "IgG3" : $igtype;
+					my $endind2print = $igtypeprint eq "IgM" ? $IgMend - $begind2 : $igtypeprint eq "IgG1" ? $IgG1end - $begind2 : $igtypeprint eq "IgG3" ? $IgG3end - $begind2 : $begind2;
+					my $begind2print = $igtypeprint eq "IgM" ? $IgMend - $endind2 : $igtypeprint eq "IgG1" ? $IgG1end - $endind2 : $igtypeprint eq "IgG3" ? $IgG3end - $endind2 : $endind2;
+					my $igmtouse = $igtypeprint eq "IgM" ? "IGMEND=IgMend-$begind2" : $igtypeprint eq "IgG1" ? "IGG1end=$IgG1end-$begind2" : $igtypeprint eq "IgG3" ? "IGG3end=$IgG3end-$begind2" : "UNKNOWN";
+					if (defined $printzfix->{$begind2print} and $printzfix->{$begind2print} !~ /;ins/) {
+#						$printzfix->{$begind2print} .= "\ni=$ki, mutposcurr=$mutposcurr[$ki], ind=$ind, type1=$type1, type2=$type2, Already defined begind2print=$begind2print above!\n" if $strand2 eq "+";
+#						LOG($outBigLog, "\ni=$ki, mutposcurr=$mutposcurr[$ki], ind=$ind, type1=$type1, type2=$type2, Already defined begind2print=$begind2print above!\n");
+					}
+					else {
+#						$printzfix->{$begind2print} .= "2 beg2=$begind2print i=$ki, mutposcurr=$mutposcurr[$ki], ind=$ind, type1=$type1, type2=$type2\n" if $strand2 eq "+";
+#						LOG($outBigLog, "\ni=$ki, mutposcurr=$mutposcurr[$ki], ind=$ind, type1=$type1, type2=$type2\n");
+					}
+
+					
+					if (defined $DATA->{$name}{mhseq} and length($DATA->{$name}{mhseq}) > 0  and $ind == $juncposfix + 1) {
+#(($strand2 eq "+" and $ind == $juncposfix + 1) or ($strand2 eq "+" and $ind == $maxind))) {
+						my $mhtype1 = "mh";
+						my $mhtype2 = $DATA->{$name}{mhseq};
+						if ($strand2 eq "+") {
+							$mhtype2 =~ tr/ACGTacgt/TGCAtgca/;
+						}
+						my $lengthmhseq = length($DATA->{$name}{mhseq});
+						my $begind2printmh = $strand2 eq "-" ? $begind2print - $lengthmhseq : $begind2print + $lengthmhseq;
+						my $endind2printmh = $strand2 eq "-" ? $begind2print - $lengthmhseq + 1 : $begind2print + $lengthmhseq + 1;
+#						$printzfix->{$begind2printmh} .= "\tMHSEQHERE! $DATA->{$name}{mhseq}, begind2printmh=$begind2printmh\n";
+						my $mh_fix_add = "NA";
+						my @checkmh = (0);#,-1,-2,-3,-4,-5,-6,-7,-8,-9,-10,1,2,3,4,5,6,7,8,9,10);
+						my ($constype1, $constype2, $cons_fix, $printzfix2);
+						for (my $kj = 0; $kj < @checkmh; $kj++) {
+							$constype1 = $cons{$igtypeprint}{1}{$begind2printmh+$fix_add+$checkmh[$kj]}{type1}; $constype1 = "UNDEF_constype1" if not defined $constype1;
+							$constype2 = $cons{$igtypeprint}{1}{$begind2printmh+$fix_add+$checkmh[$kj]}{type2}; $constype2 = "UNDEF_constype2" if not defined $constype2;
+							if (not defined $constype1) {
+								#$printzfix->{$begind2printmh} .= "undef constype1, nexted!\n";
+								next;
+							}
+							else {
+								#$printzfix->{$begind2printmh} .= "$kj: defined constype=$constype1\_$constype2, checkmh=$checkmh[$kj]\n";
+							}
+							$printzfix2 = $printzfix->{$begind2printmh};
+							($cons_fix, $constype2, $printzfix2) = check_cons_fix($mhtype1, $mhtype2, $constype1, $constype2, $printzfix2, \%cons, $begind2printmh, $igtypeprint, $strand1, $checkmh[$kj]);
+							my $origcons_fix = $cons_fix; $origcons_fix =~ s/[ ]+/_/g;
+							$cons_fix = $cons_fix =~ /GOOD/ ? $LGN . $cons_fix . $N : $cons_fix =~ /BAD/ ? $LRD . $cons_fix . $N : $LCY. $cons_fix . $N;
+							if ($cons_fix =~ /GOOD/) {
+								$mh_fix_add = $checkmh[$kj];
+								$printzfix->{$begind2printmh} = $printzfix2;
+						
+								$printzfix->{$begind2printmh} .= "AJ851868.3\t$begind2printmh\t$endind2printmh\t$igtypeprint;$mhtype1;$mhtype2;$ind\t0\t$strand2\t$igtypeprint\t$constype1,$constype2\t$cons_fix\tfix_add=$mh_fix_add\n";
+#								print $outloc "$name\tBAIT\tNG_005838.1\t$begind2printmh\t$endind2printmh\t$igtypeprint;$mhtype1;$mhtype2;$ind\t0\t$strand2\t$igtypeprint\t$constype1\t$constype2\t$origcons_fix\t$mh_fix_add\n";
+								print $outloc "AJ851868.3\t$igtypeprint\t$begind2printmh\t$endind2printmh\t$mhtype1\_$mhtype2\t0\t$strand1\tmutorig=$type1\_$type2;change=$origcons_fix;constype=$constype1\_$constype2;name=$name;type=BAIT;ig=$igtypeprint;fix_add=$mh_fix_add;ki=$ki;mutposorig=$mutposorig2[$ki];mutposcurr=$mutposcurr2[$ki];coor=chr12\_$begind2\_$endind2\_$name,$igtypeprint\_0\_$strand2\n";
+								last;
+							}
+							else {
+								$printzfix->{$begind2printmh} .= "\tMH not good! MH i=$kj, type1_type2=$type1\_$type2, constype1=$constype1, constype2=$constype2, cons_fix=$LPR$cons_fix$N,checkmh=$LPR$checkmh[$kj]$N\n";
+							}
+						}
+						if ($mh_fix_add eq "NA") {
+#							$printzfix->{$lastbegind1print} .= "\t$cons_fix\n";
+							$printzfix->{$begind2printmh} .= "ki=$ki, ind=$ind, maxind=$maxind, AJ851868.3\t$begind2printmh\t$endind2printmh\t$igtypeprint;$mhtype1;$mhtype2;$ind\t0\t$strand2\t$igtypeprint\t$constype1,$constype2\t$cons_fix\tfix_add=$mh_fix_add\n";
+							$printzfix->{$lastbegind1print} .= $printzfix->{$begind2printmh};
+							$printzfix->{$begind2printmh} .= "";
+							undef $printzfix->{$begind2printmh};
+							delete $printzfix->{$begind2printmh};
+#							$printzfix->{$begind2printmh} .= "AJ851868.3\t$begind2printmh\t$endind2printmh\t$igtypeprint;$mhtype1;$mhtype2;$ind\t0\t$strand2\t$igtypeprint\t$constype1,$constype2\t$cons_fix\tfix_add=$mh_fix_add\n";
+							print $outloc "AJ851868.3\t$igtypeprint\t$begind2printmh\t$endind2printmh\t$mhtype1\_$mhtype2\t0\t$strand1\tmutorig=$type1\_$type2;change=$cons_fix;constype=$constype1\_$constype2;name=$name;type=BAIT;ig=$igtypeprint;fix_add=$mh_fix_add;ki=$ki;mutposorig=$mutposorig2[$ki];mutposcurr=$mutposcurr2[$ki];coor=chr12\_$begind2\_$endind2\_$name,$igtypeprint\_0\_$strand2\n";
+						}
+					}
+
+					my $constype1 = $cons{$igtypeprint}{1}{$begind2print+$fix_add}{type1}; $constype1 = "UNDEF_constype1" if not defined $constype1;
+					my $constype2 = $cons{$igtypeprint}{1}{$begind2print+$fix_add}{type2}; $constype2 = "UNDEF_constype2" if not defined $constype2;
+					my ($cons_fix, $printzfix2);
+					$printzfix2 = $printzfix->{$begind2print};
+					($cons_fix, $constype2, $printzfix2) = check_cons_fix($type1, $type2, $constype1, $constype2, $printzfix2, \%cons, $begind2print, $igtypeprint, $strand2, $fix_add);
+					my ($change, $ctype1, $ctype2) = ("", $type1, $type2);
+					if ($cons_fix =~ /CHANGE/ and $cons_fix !~ /DONT/) {
+						($change, $ctype1, $ctype2) = $cons_fix =~ /^(CHANGE) ([A-Za-z0-9]+)_(.+)$/;
+						$printzfix2 .= "\t$LRD ctype1 or 2 undefined! cons_fix=$cons_fix\n" if not defined $ctype1 or not defined $ctype2;
+						$ctype1 = $type1 if not defined $ctype1;
+						$ctype2 = $type2 if not defined $ctype2;
+						$printzfix2 .= "\t$YW>Changing $LGN$type1 $type2$N into $LPR$ctype1 $ctype2$N\n" if defined $ctype1 and defined $ctype2;
+						$typehash1->{$type1}{$type2} --;
+						$typehash1->{$ctype1}{$ctype2} ++;
+						if ($typehash1->{$type1}{$type2} == 0) {
+							undef $typehash1->{$type1}{$type2};
+							delete $typehash1->{$type1}{$type2};
+						}
+					}
+					my $origcons_fix = $cons_fix; $origcons_fix =~ s/[ ]+/_/g;
+
+					$cons_fix = $cons_fix =~ /GOOD/ ? $LGN . $cons_fix . $N : $cons_fix =~ /BAD/ ? $LRD . $cons_fix . $N : $LCY. $cons_fix . $N;
+					$printzfix->{$begind2print} = $printzfix2;
+
+
+#foreach my $type1 (sort keys %type1) {
+#	next if $type1 =~ /^(inspos|delpos|matpos|mispos|mhpos|tot|nuc|R2)$/;
+#	foreach my $type2 (sort keys %{$type1{$type1}}) {
+#		my $mutpos_joined = $lochash1->{$type1}{$type2}{join}; $mutpos_joined = "N/A" if not defined $mutpos_joined;
+#		my $number = $type1{$type1}{$type2};
+
+
+					$printzfix->{$begind2print} .= "AJ851868.3\t$begind2print\t$endind2print\t$igtypeprint;$type1;$type2;$ind\t0\t$strand2\t$igtypeprint\t$constype1,$constype2\t$cons_fix\tfix_add=$fix_add\n";
+#					$printzfix->{$begind2print} .= "\tIgG1=$IgG1beg - $IgG1end, begorig2=$begorig2 endorig2=$endorig2, begind2=$begind2 = begorig2=$begorig2 + (ind=$ind - juncposfix=$juncposfix + mhlen=$mhlen) + 1\n";
+					print $outloc "AJ851868.3_$igtypeprint\t$begind2print\t$endind2print\t$ctype1\_$ctype2\t0\t$strand2\tmutorig=$type1\_$type2;change=$origcons_fix;constype=$constype1\_$constype2;name=$name;type=PREY;ig=$igtypeprint;fix_add=$fix_add;ki=$ki;mutposorig=$mutposorig2[$ki];mutposcurr=$mutposcurr2[$ki];coor=chr12\_$begind2\_$endind2\_$name,$igtypeprint\_0\_$strand2\n";
+				}
+				$lastmutpos = $ind if $lastmutpos < $ind;
+				if (defined $temp[$ind]) {
+					$temp{$ind} = $temp[$ind] if not defined $temp{$ind};
+					$temp{$ind} .= ",$nuc";
+				}
+				else {
+					$temp[$ind] = $nuc;
+				}
+			}
+		}
+	}
+
+	print "\n\nBEFORE:\n$printhash1\nAFTER:\n";
+	# dump typehash1
+	foreach my $type1 (sort keys %{$typehash1}) {
+		foreach my $type2 (sort keys %{$typehash1->{$type1}}) {
+			if ($typehash1->{$type1}{$type2} =~ /HASH/) {
+				my $typehash1temp = $typehash1->{$type1}{$type2};
+				foreach my $key (sort keys %{$typehash1temp}) {
+					print "type1=$LCY$type1$N, type2=$LGN$type2$N, key=$key value=$LPR$typehash1->{$type1}{$type2}{$key}$N\n";
+				}
+			}
+			else {
+				print "type1=$LCY$type1$N, type2=$LGN$type2$N, value=$LPR$typehash1->{$type1}{$type2}$N\n";
+			}
+		}
+	}
+	print "\n\n";
+	
+	#	LOG($outBigLog, "AAAAAAA\n");
+	open (my $outztemp, ">", $outztempFile) or die;
+	open (my $outzfix, ">", $outzfixFile) or die;
 	foreach my $begindprint (sort {$a <=> $b} keys %{$printzfix}) {
 		print $outzfix "$printzfix->{$begindprint}";
 		LOG($outBigLog, "$printzfix->{$begindprint}");
 	}
-	print $outztemp "$chr1\t$coorz{begind1}\t$coorz{endind1}\t$name\t0\t$strand1\n";
-	print $outztemp "$chr2\t$coorz{begind2}\t$coorz{endind2}\t$name\t0\t$strand2\n";
-	system("fastaFromBed -fi /home/mitochi/Bowtie2_indexes/mm9/mm9.fa -bed outztemp.bed -fo outztemp.fa -s -name");
-	my @fa = `cat outztemp.fa`;
+	#	LOG($outBigLog, "BBBBBBB\n");
+
+	print $outztemp "$chr1\t$coorz{begind1}\t$coorz{endind1}\t$name\t0\t$strand1\n" if defined $coorz{begind1};
+	print $outztemp "$chr2\t$coorz{begind2}\t$coorz{endind2}\t$name\t0\t$strand2\n" if defined $coorz{begind2};
+
+#my $outzfixFile = $outFile . ".outzfix.bed.temp";
+#my $outztempFile = $outFile . ".outztemp.bed.temp";
+#my $outzfaFile = $outFile . ".outztemp.fa";
+
+	system("fastaFromBed -fi /home/mitochi/Bowtie2_indexes/mm9/mm9.fa -bed $outztempFile -fo $outzfaFile -s -name");
+	my @fa = `cat $outzfaFile`;
 	for (my $i = 0; $i < @fa; $i++) {
 		chomp($fa[$i]);
 		next if $fa[$i] =~ /^>/;
-		my $space0 = join("", (" ") x $coorz{ind1});
-		my $space1 = join("", (" ") x $coorz{ind2});
+		my $space0 = defined $coorz{ind1} ? join("", (" ") x $coorz{ind1}) : "";
+		my $space1 = defined $coorz{ind2} ? join("", (" ") x $coorz{ind2}) : "";
 		LOG($outBigLog, "\n\n" . $space0 . colorize($fa[$i]) . "\n") if $i == 1;
 		LOG($outBigLog, $space1 . colorize($fa[$i]) . "\n\n") if $i == 3;
 	}
-
+	
+	
 	for (my $i = 0; $i < $lastmutpos+1; $i++) {
 		$temp[$i] = " " if not defined $temp[$i];
 	}
-
-
+	for (my $i = 0; $i < @temp; $i++) {
+		$temp[$i] = " " if not defined $temp[$i];
+	#		die "lastmutpos = $lastmutpos+1, i=$i temp=undefined!\n" if not defined $temp[$i];
+	}
+	
 	LOG($outBigLog, "\n" . colorize($DATA->{$name}{'seqCON_aln'}) . "\n" . colorize($seqCON_orig) . "\n");
-	LOG($outBigLog, colorize(join("", @temp)) . "\n\n");
+	LOG($outBigLog, colorize(join("", @temp)) . "\n\n") if defined $coorz{begind1};
 	foreach my $i (sort {$a <=> $b} keys %temp) {
 		LOG($outBigLog, "$i. $temp{$i}\n\n");
 	}
-
+	
 	LOG($outBigLog, "\nSTRAND1=$strand1, STRAND2=$strand2\nOriginal:\n");
 	LOG($outBigLog, "BAIT: $DATA->{$name}{origbeg1}-$DATA->{$name}{origend1}, junc=$DATA->{$name}{origbegJ1}, T=$DATA->{$name}{origbegT1}-$DATA->{$name}{origendT1}\n");
 	LOG($outBigLog, "PREY: $DATA->{$name}{origbeg2}-$DATA->{$name}{origend2}, junc=$DATA->{$name}{origbegJ2}, T=$DATA->{$name}{origbegT2}-$DATA->{$name}{origendT2}\n");
-
+	
 	LOG($outBigLog, "\nOriginal2:\n");
 	LOG($outBigLog, "BAIT: $DATA->{$name}{begorig1}-$DATA->{$name}{endorig1}, junc=$DATA->{$name}{begJ1}, T=$DATA->{$name}{begT1}-$DATA->{$name}{endT1}\n");
 	LOG($outBigLog, "PREY: $DATA->{$name}{begorig2}-$DATA->{$name}{endorig2}, junc=$DATA->{$name}{begJ2}, T=$DATA->{$name}{begT2}-$DATA->{$name}{endT2}\n");
-
+	
 	LOG($outBigLog, "\nCurrent:\n");
 	LOG($outBigLog, "BAIT: $DATA->{$name}{beg1}-$DATA->{$name}{end1}, junc=$DATA->{$name}{begJ1}, T=$DATA->{$name}{begT1}-$DATA->{$name}{endT1}\n");
 	LOG($outBigLog, "PREY: $DATA->{$name}{beg2}-$DATA->{$name}{end2}, junc=$DATA->{$name}{begJ2}, T=$DATA->{$name}{begT2}-$DATA->{$name}{endT2}\n");
-
-
+	
+	
 	($igtypez, $typez1, $typez2, $all) = count_final("R1", $igtypez, $typez1, $typez2, $muthash, $typehash1, $lochash1, $DATA->{$name}, $name, 1, $outBigLog, $outLog, $namewant);
+	
+	LOG($outBigLog, "\n---------$LGN DONE with $LCY$name$N ---------\n\n\n");
+	LOG($outLog, "\n---------$LGN DONE with $LCY$name$N ---------\n\n\n","NA");
 	LOG($outBigLog, "${N}\n",$NA);
 	LOG($outLog, "${N}\n","NA");
-
-#	LOG($outBigLog, "${YW}------------------------------------------------\n6b. Tabulating mutation from seqQ2 (Read pair #2)\n------------------------------------------------${N}\n" . date() . "\n",$NA);
-#	LOG($outLog, "${YW}------------------------------------------------\n6b. Tabulating mutation from seqQ2 (Read pair #2)\n------------------------------------------------${N}\n" . date() . "\n","NA");
-#
-#	foreach my $mutpos (sort keys %{$muthash}) {
-#		my $mut1 = $muthash->{$mutpos}{1}; $mut1 = "none" if not defined $mut1;
-#		my $mut2 = $muthash->{$mutpos}{2}; $mut2 = "none" if not defined $mut2;
-#		if ($mutpos <= $beg_fix or $mutpos >= $end_fix and (($mut1 eq "none" and $mut2 ne "none") or ($mut2 eq "none" and $mut1 ne "none"))) {
-#			if ($mut1 eq "none" and $mut2 ne "none") {
-#				my $mut = $mut2;
-#				my ($type1, $type2) = $mut =~ /^(ins|del|mat|mis|mh)_(.+)$/;
-#				DIELOG($outBigLog, "Can't find type1 from mutpos=$mutpos mut=$mut; not ins/del/mat/mis/mh_?\n\n") if not defined $type1;
-#				$typehash1->{$type1}{$type2} ++;
-#				$typehash1->{tot}{tot} ++;
-#			}
-#		}
-#		elsif ($mut1 ne $mut2 and $mut1 ne "none" and $mut2 ne "none") {
-#			my $color = $mut1 eq $mut2 ? "" : $mutpos >= $end_fix ? "" : $mutpos <= $beg_fix ? "" : "$LRD";
-#			LOG($outBigLog, "$color" . "mutpos${N}=${LGN}$mutpos${N} mut1=${LCY}$mut1${N} mut2=${LGN}$mut2${N}\n");
-#			my $mut = $mut2;
-#			my ($type1, $type2) = $mut =~ /^(ins|del|mat|mis|mh)_(.+)$/;
-#			DIE($outBigLog, "Can't find type1 from mutpos=$mutpos mut=$mut; not ins/del/mat/mis/mh_?\n\n") if not defined $type1;
-#			$typehash1->{R2}{$type1}{$type2} ++;
-#		}
-#		$typehash1->{tot}{tot} = 100 if $typehash1->{tot}{tot} < 10;
-#	}
-#
-#	($igtypez, $typez1, $typez2, $all) = count_final("R1", $igtypez, $typez1, $typez2, $muthash, $typehash1, $DATA->{$name}, $name, 1, $outBigLog, $outLog, $namewant);
-
+	
+	#	LOG($outBigLog, "${YW}------------------------------------------------\n6b. Tabulating mutation from seqQ2 (Read pair #2)\n------------------------------------------------${N}\n" . date() . "\n",$NA);
+	#	LOG($outLog, "${YW}------------------------------------------------\n6b. Tabulating mutation from seqQ2 (Read pair #2)\n------------------------------------------------${N}\n" . date() . "\n","NA");
+	#
+	#	foreach my $mutpos (sort keys %{$muthash}) {
+	#		my $mut1 = $muthash->{$mutpos}{1}; $mut1 = "none" if not defined $mut1;
+	#		my $mut2 = $muthash->{$mutpos}{2}; $mut2 = "none" if not defined $mut2;
+	#		if ($mutpos <= $beg_fix or $mutpos >= $end_fix and (($mut1 eq "none" and $mut2 ne "none") or ($mut2 eq "none" and $mut1 ne "none"))) {
+	#			if ($mut1 eq "none" and $mut2 ne "none") {
+	#				my $mut = $mut2;
+	#				my ($type1, $type2) = $mut =~ /^(ins|del|mat|mis|mh)_(.+)$/;
+	#				DIELOG($outBigLog, "Can't find type1 from mutpos=$mutpos mut=$mut; not ins/del/mat/mis/mh_?\n\n") if not defined $type1;
+	#				$typehash1->{$type1}{$type2} ++;
+	#				$typehash1->{tot}{tot} ++;
+	#			}
+	#		}
+	#		elsif ($mut1 ne $mut2 and $mut1 ne "none" and $mut2 ne "none") {
+	#			my $color = $mut1 eq $mut2 ? "" : $mutpos >= $end_fix ? "" : $mutpos <= $beg_fix ? "" : "$LRD";
+	#			LOG($outBigLog, "$color" . "mutpos${N}=${LGN}$mutpos${N} mut1=${LCY}$mut1${N} mut2=${LGN}$mut2${N}\n");
+	#			my $mut = $mut2;
+	#			my ($type1, $type2) = $mut =~ /^(ins|del|mat|mis|mh)_(.+)$/;
+	#			DIE($outBigLog, "Can't find type1 from mutpos=$mutpos mut=$mut; not ins/del/mat/mis/mh_?\n\n") if not defined $type1;
+	#			$typehash1->{R2}{$type1}{$type2} ++;
+	#		}
+	#		$typehash1->{tot}{tot} = 100 if $typehash1->{tot}{tot} < 10;
+	#	}
+	#
+	#	($igtypez, $typez1, $typez2, $all) = count_final("R1", $igtypez, $typez1, $typez2, $muthash, $typehash1, $DATA->{$name}, $name, 1, $outBigLog, $outLog, $namewant);
+	
 }
 close $out1;
+close $outloc;
 
 LOG($outBigLog, "${YW}
 ------------------------------------------------
@@ -941,8 +1480,8 @@ LOG($outBigLog, "${YW}
 ");
 my $okay = (keys %okay);
 my $totalpair = (keys %totalpair);
-LOG($outBigLog, "\ntotalpair\t$totalpair\npairokay (at least 1 pair good)\t$okay\ntotalall\t$totalall\ngood\t$good\nnexted_sequndef\t$nexted_sequndef\nnexted_bothshort\t$nexted_bothshort\nnexted_begshort\t$nexted_begshort\nnexted_endshort\t$nexted_endshort\nnexted_juncmissing\t$nexted_juncmissing\n");
-LOG($outLog, "\ntotalpair\t$totalpair\npairokay (at least 1 pair good)\t$okay\ntotalall\t$totalall\ngood\t$good\nnexted_sequndef\t$nexted_sequndef\nnexted_bothshort\t$nexted_bothshort\nnexted_begshort\t$nexted_begshort\nnexted_endshort\t$nexted_endshort\nnexted_juncmissing\t$nexted_juncmissing\n", "NA");
+LOG($outBigLog, "\ntotalpair\t$totalpair\npairokay (at least 1 pair good)\t$okay\ntotalall\t$totalall\ngood\t$good\nnexted_sequndef\t$nexted_sequndef\nnexted_bothshort\t$nexted_bothshort\nnexted_begshort\t$nexted_begshort\nnexted_endshort\t$nexted_endshort\nnexted_juncmissing\t$nexted_juncmissing\nnexted_others (e.g. not IgM/G1/G3)\t$nexted_others\n");
+LOG($outLog, "\ntotalpair\t$totalpair\npairokay (at least 1 pair good)\t$okay\ntotalall\t$totalall\ngood\t$good\nnexted_sequndef\t$nexted_sequndef\nnexted_bothshort\t$nexted_bothshort\nnexted_begshort\t$nexted_begshort\nnexted_endshort\t$nexted_endshort\nnexted_juncmissing\t$nexted_juncmissing\nnexted_others (e.g. not IgM/G1/G3)\t$nexted_others\n", "NA");
 #close $outLog;
 #close $outBed;
 
@@ -984,6 +1523,124 @@ LOG($outBigLog, "----------------------------\n");
 system("head -n 5 $outFile.all");
 LOG($outBigLog, "\n----------------------------\n\n");
 
+sub check_cons_fix {
+	my ($type1, $type2, $cons1, $cons2, $printzfix2, $cons, $begindprint, $igtypeprint, $strand, $fix_add) = @_;
+	if ($strand eq "+") {
+		my $newcons2 = "";
+		my @cons2 = split("", $cons2);
+		for (my $i = 0; $i < @cons2; $i++) {
+			my $cons2temp = $cons2[$i];
+			$cons2temp =~ tr/_ACTGactg/_TGACtgac/;
+			$newcons2 .= $cons2temp;
+		}
+		$cons2 = $newcons2;
+	}
+	my $origtype1 = $type1;
+	my $origtype2 = $type2;
+	my $origcons1 = $cons1;
+	my $origcons2 = $cons2;
+
+	if ($type1 eq "mat") {
+		($type2) = $type2 =~ /^\w+_(\w+)$/;
+	}
+	if ($cons1 eq "mat") {
+		($cons2) = $cons2 =~ /^\w+_(\w+)$/;
+	}
+
+#	$printzfix2 .= "\ttype=$type1, $type2, cons=$cons1, $cons2" if $strand eq "+";
+	if ($cons1 =~ /UNDEF/ or $cons2 =~ /UNDEF/) {
+		return("BAD cons1 UNDEF cons2 UNDEF", $origcons2, $printzfix2);
+	}
+	if ($type1 eq "mat" and $cons1 =~ /^(mis|mat)$/) {
+		my ($exp, $obs) = $cons2 =~ /^(\w+)_(\w+)$/ if $cons1 ne "mat";
+		$obs = $cons2 if $cons1 eq "mat";
+#		$printzfix2 .= ", mis/mat type1=$type1, type2=$type2, cons1=$cons1, cons2=$cons2, obs=$obs (from cons2)\n" if $strand eq "+";
+		return("GOOD $type1", $origcons2, $printzfix2) if $cons2 =~ /$type2/i;
+		return("DONT CHANGE mis_$obs\_$origtype2", $origcons2, $printzfix2);
+	}
+	elsif ($type1 eq "mat" and $cons1 =~ /^del$/) {
+		my ($obs) = $cons2 =~ /^(\w)\w*$/;
+#		$printzfix2 .= ", del type1=$type1, type2=$type2, cons1=$cons1, cons2=$cons2, obs=$obs (from cons2)\n" if $strand eq "+";
+		return("GOOD $type1", $origcons2, $printzfix2) if $obs eq $type2;
+		return("DONT CHANGE mis_$type2\_$obs", $origcons2, $printzfix2);
+	}
+	elsif ($type1 eq "del" and $cons1 =~ /^del$/) {
+#		my ($obs) = $cons2 =~ /^(\w)\w*$/;
+#		$printzfix2 .= ", del type1=$type1, type2=$type2, cons1=$cons1, cons2=$cons2\n" if $strand eq "+";
+		return("CHANGE mat_$type1\_$type1", $origcons2, $printzfix2) if $type2 eq $cons2;
+		return("GOOD $type1", $origcons2, $printzfix2);
+	}
+	elsif ($type1 eq "mis" and $cons1 =~ /^(mis|mat)$/) {
+		my ($exp, $obs) = $type2 =~ /^(\w+)_(\w+)$/;
+#		$printzfix2 .= ", mis/mat type1=$type1, type2=$type2, cons1=$cons1, cons2=$cons2, exp=$exp, obs=$obs (from type2)\n" if $strand eq "+";
+		return("GOOD $type1", $origcons2, $printzfix2) if $cons2 !~ /$obs/i;
+		return("CHANGE mat_$obs\_$obs", $origcons2, $printzfix2);
+	}
+	elsif ($type1 eq "mis" and $cons1 =~ /^del$/) {
+		my ($exp, $obs) = $type2 =~ /^(\w)\w*_(\w)\w*$/;
+#		$printzfix2 .= ", del type1=$type1, type2=$type2, cons1=$cons1, cons2=$cons2, exp=$exp, obs=$obs (from type2)\n" if $strand eq "+";
+		return("CHANGE mat_$type2\_$obs", $origcons2, $printzfix2) if $obs eq $type2;
+		return("GOOD $type1", $origcons2, $printzfix2);
+	}
+	elsif ($type1 eq "mh") {
+		my $obs = $type2;
+		my $obslen = length($obs);
+		my $good = 0;
+		my $ind = 0;
+		my $newcons = "";
+		for (my $i = $begindprint; $i < $begindprint + $obslen; $i++) {
+			my $cons3 = $cons{$igtypeprint}{1}{$i+$fix_add}{type1}; $cons3 = "UNDEF" if not defined $cons3;
+			my $cons4 = $cons{$igtypeprint}{1}{$i+$fix_add}{type2}; $cons4 = "UNDEF" if not defined $cons4;
+			my $obs2 = substr($type2, $ind, 1);
+			if ($cons3 =~ /^(mis|mat)$/) {
+				$good ++ if $cons4 =~ /$obs2/;
+				if ($cons3 eq "mat") {
+					$cons3 = "";
+					($cons4) =~ s/^(\w)_\w$/$1/;
+					if ($newcons eq "") {
+						$newcons .= "i=$cons4";
+					}
+					else {
+						$newcons .= "$cons4";
+					}
+				}
+				else {
+					if ($newcons eq "") {
+						$newcons .= "$i=$cons3\_$cons4,";
+					}
+					else {
+						$newcons .= ",$cons3\_$cons4,";
+					}
+				}
+			}
+			$ind ++;
+		}
+		$newcons =~ s/,,/,/g;
+		$newcons =~ s/,$//;
+#		$printzfix2 .= ", type1=$type1, type2=$type2, newcons=$newcons, good=$good/$obslen\n" if $strand eq "+";
+		if ($good == $obslen or ($obslen > 4 and $good >= $obslen - 2) or ($obslen > 10 and $good / $obslen > 0.9)) {
+			return("GOOD good=$good obslen=$obslen $type1", $newcons, $printzfix2);
+		}
+		else {
+			return("BAD $type1 good=$good obslen=$obslen $type1", $newcons, $printzfix2);
+		}
+	}
+	elsif ($type1 eq "ins") {
+#		$printzfix2 .= ", ins type1=$type1, type2=$type2, cons1=$cons1, cons2=$cons2\n" if $strand eq "+";
+
+		if ($type1 eq $cons1 and $type2 eq $cons2) {
+			return("CHANGE mat_$type2", $origcons2, $printzfix2);
+		}
+		else {
+			return("GOOD $type1", $origcons2, $printzfix2);
+		}
+	}
+
+#	$printzfix2 .= ", unknown\n" if $strand eq "+";
+	return("UNKNOWN", $origcons2, $printzfix2);
+}
+
+
 sub muscle {
 	my ($cmd) = @_;
 	return(`echo '$cmd' | muscle $muscleparam 2> /dev/null`);
@@ -1016,6 +1673,7 @@ sub parse_metaFile {
 
 
 	my $metaHASH;
+
 	my $linecount = 0;
 	my $linefoundcount = 0;
 	my $linefound = "";
@@ -1128,8 +1786,13 @@ sub parse_inputFile {
 			}
 			else {
 				$data->{$name}{line} .= "$def[$i]=${LGN}$arr[$i]${N}";
-				$data->{$name}{line} .= ","  if ($i != 0 and $i % 5 != 0 and $i != @def - 1);
-				$data->{$name}{line} .= "\n" if ($i != 0 and $i % 5 == 0 or ($i == @def - 1));
+				if ($i != 0 and $i % 5 == 0 or ($i == @def - 1)) {
+					$data->{$name}{line} .= "\n";
+				}
+				else {
+					$data->{$name}{line} .= ",";
+				}
+			#  if ($i != 0 and $i % 5 != 0 and $i != @def - 1);
 			}
 		}
 		$data->{$name}{line} .= $myprintcigarseq . "\n$dashhead\n";
@@ -1464,7 +2127,7 @@ sub parse_fastqFile {
 			$log .= "$defz1\t$res->{$defz1}\n";
 			$log .= "$defz2\t$res->{$defz2}\n\n";
 		}
-		$log .= "   - SEQ$readorient LEN = " . length($seq) . "\n";
+		$log .= "   - SEQ$readorient LEN = " . length($seq) . "\n" if $nexted < 5;
 		last if (keys %{$count}) >= scalar(keys %{$data});
 	}
 	close $inFQ1;
@@ -1517,24 +2180,14 @@ sub count_final {
 			LOG($outLog, "$type1{tot}{tot})\n", "NA");
 		}
 	}
-#	my @type1 = qw(mat mis ins del mh);
-#	my @nucs = qw(A C G T);
-#	my %type1all;
-#	foreach my $type1 (@type1[0..@type1-1]) {
-#		if ($typeq eq "mat") {
-#			foreach my $nuc (sort @nucs) {
-#				my $nucs = "$nuc\_$nuc";
-#				$type1{$type1}{$nucs} = 0 if not defined $type1{$type1}{$nucs};
-#			}
-#		}
-#	}
+
 	my %cur;
 	LOG($outBigLog, "tot,$type1{tot}{tot}\n\n",$NA);
 	LOG($outLog, "tot,$type1{tot}{tot}\n\n", "NA");
 	foreach my $type1 (sort keys %type1) {
 		next if $type1 =~ /^(inspos|delpos|matpos|mispos|mhpos|tot|nuc|R2)$/;
 		foreach my $type2 (sort keys %{$type1{$type1}}) {
-			my $mutpos_joined = $lochash1->{$type1}{$type2}{join};
+			my $mutpos_joined = $lochash1->{$type1}{$type2}{join}; $mutpos_joined = "N/A" if not defined $mutpos_joined;
 			my $number = $type1{$type1}{$type2};
 			
 			my $perc = $type1{tot}{tot} == 0 ? 0 : $number/$type1{tot}{tot}*100;
@@ -1609,6 +2262,7 @@ sub count_final {
 				DIELOG($outBigLog, "shouldn't happen with type1=$type1, type2=$type2, number=$number, type3=$type3\n");
 			}
 			my $print3 = "\t$data->{chr1}\t$data->{beg1}\t$data->{end1}\t$data->{begJ1}\t$data->{len1}\t$data->{strand1}\t$data->{chr2}\t$data->{beg2}\t$data->{end2}\t$data->{begJ2}\t$data->{len2}\t$data->{strand2}\t$data->{origbeg1}\t$data->{origend1}\t$data->{origbeg2}\t$data->{origend2}\t$mutpos_joined\n";
+			LOG($outBigLog, "MUTPOSJOINED UNDEFINED! AT:\n$print3\n\n") if not defined $mutpos_joined;
 #			my $print3 = ",$data->{chr1},$data->{begorig1},$data->{endorig1},$data->{begJ1},$data->{len1},$data->{strand1},$data->{chr2},$data->{begorig2},$data->{endorig2},$data->{begJ2},$data->{len2},$data->{strand2}\n";
 			LOG($outBigLog, $print3, $NA);
 			LOG($outLog, $print3, "NA");
@@ -1809,13 +2463,21 @@ sub print_cigar {
 	my ($seq1, $seq2, $flag) = ("", "", "");
 	my @seq1orig = split("", $seq1orig);
 	my ($ind1, $ind2, $ind) = (0,0,0);
-	my $die = 0;
+	my $die = "";
 	my $printz = "";
+	my $undeftoend = 0;
    for (my $i = 0; $i < @{$nums}; $i++) {
 		my $alp = $alps->[$i];
 		my $num = $nums->[$i];
 		for (my $j = $ind; $j < $ind + $num; $j++) {
-			$die = 1 if not defined($seq1orig[$j]);
+			if (not defined ($seq1orig[$j])) {
+				$die .= "," if $die ne "";
+				$die .= $j-1;
+				$undeftoend = 1;
+			}
+			else {
+				$undeftoend = 0;
+			}
 			my $seq1origchunk = $seq1orig[$j];
 			$seq1origchunk = "-" if not defined $seq1origchunk;
 			if ($alp eq "M") {
@@ -1853,7 +2515,7 @@ sub print_cigar {
    }
 	LOG($outBigLog, "seqTN  " . colorize($seq1orig) . "\nREF    " . colorize($seq1) . "\nseqTR  " . colorize($seq2) . "\nflag   " . $flag . "\n\n") if $name eq $namewant;
 #	LOG($outBigLog, "\n\nDEAD\n\n$printz\n\nname=$name\nind1=$ind1, ind2=$ind2, ind=$ind\n$cigar\nseqTN  " . colorize($seq1orig) . "\nREF    " . colorize($seq1) . "\nseqTR  " . colorize($seq2) . "\nflag   " . $flag . "\n\n") if $die eq 1;
-	LOG($outBigLog, "\n\nDEAD\n\n$printz\n\nname=$name\nind1=$ind1, ind2=$ind2, ind=$ind\n$cigar\nseqTN  " . colorize($seq1orig) . "\nREF    " . colorize($seq1) . "\nseqTR  " . colorize($seq2) . "\nflag   " . $flag . "\n\n") if $die eq 1;
+	LOG($outBigLog, "\n\ndied at line 2500+ 3_Mutation.pl:\nUndef=seq1orig[j]\nj=$die\nname=$LCY$name$N\n\n$printz\n\nname=$name\nind1=$ind1, ind2=$ind2, ind=$ind\n$cigar\nseqTN  " . colorize($seq1orig) . "\nREF    " . colorize($seq1) . "\nseqTR  " . colorize($seq2) . "\nflag   " . $flag . "\n\n") if $die ne "" and $undeftoend eq 0;
 	return($seq1);
 }
 __END__

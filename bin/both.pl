@@ -155,8 +155,10 @@ die "input must be a filter.tlx.50.50.final.tsv!\n" if $input1 !~ /filter.tlx.50
 my ($sampleID) = $fileName1 =~ /^.*([WRSD][0-9](cut)?)/; die "can't get samp;leID from $LCY$fileName1$N\n" if not defined $sampleID;
 my ($sampleType, $sampleNo) = $fileName1 =~ /^.*([WRSD])([0-9])/; die "can't get samp;le from $LCY$fileName1$N\n" if not defined $sampleType or not defined $sampleNo;
 my ($cut) = $fileName1 =~ /$sampleType${sampleNo}cut/ ? "CUT" : "UNCUT";
+$cut = "CUT" if $fileName1 =~ /[WDSR]2/;
 my $treat = $sampleType eq "W" ? "1. WT" : $sampleType eq "S" ? "2. Setx KO" : $sampleType eq "R" ? "3. RNH2b KO" : $sampleType eq "D" ? "4. Setx RNH2b DKO" : "5. Unknown";
-my $sample = $sampleNo eq 1 ? "IgG1 undigested germline" : $sampleNo eq 2 ? "IgG3 undigested enriched" : $sampleNo eq 3 ? "IgG1 digested enriched" : "Unknown sampleription";
+my $sample = $sampleNo eq 1 ? "IgG1 undigested germline" : $sampleNo eq 3 ? "IgG3 undigested enriched" : $sampleNo eq 2 ? "IgG1 digested enriched" : "Unknown sampledescription";
+$sample =~ s/undigested/digested/g if $cut eq "CUT";
 my $myfill = "$sampleNo\\n$sample\\n$cut\\nBAIT=IgM\\n";
 my %name;
 my %len;

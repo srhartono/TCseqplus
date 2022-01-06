@@ -123,18 +123,28 @@ sub fix_pos2 {
 sub get_sampletype {
 	my ($sampleID) = @_; #W1
 	my ($sample0, $treat0, $cut) = $sampleID =~ /^([A-Z])([0-9]+)(cut)?$/;
-	$cut = " (B. CUT)" if defined $cut;
-	$cut = " (A. NOT_CUT)" if not defined $cut;
+	
+#	$cut = " (B. CUT)" if defined $cut;
+#	$cut = " (A. )" if not defined $cut;
+
+	my $cutprint = defined $cut ? "cut" : "uncut";
 
 	my $sample = $sample0 eq "W" ? "1. WT" :
 					 $sample0 eq "S" ? "2. Setx KO" :
 					 $sample0 eq "R" ? "3. RNH2b KO" :
 					 $sample0 eq "D" ? "4. Setx RNH2b DKO" : "5. UNK SAMPLEID $sample0";
 
-	my $treat = $treat0 eq "1" ? "1. IgG1 undig germ$cut" :
- 					 $treat0 eq "2" ? "2. IgG3 undig rich$cut" :
-					 $treat0 eq "3" ? "3. IgG1 diges rich$cut" : "4. UNK TREAT $treat0$cut";
+	my $treat =	 $treat0 eq "1" ? "1. IgG1 undig germ" :
+# 					 $treat0 eq "2" ? "2. IgG3 undig rich" :
+#					 $treat0 eq "3" ? "3. IgG1 diges rich" : "4. UNK TREAT $treat0";
+					 $treat0 eq "2" ? "2. IgG1 diges rich" : 
+ 					 $treat0 eq "3" ? "3. IgG3 undig rich" : "4. UNK TREAT $treat0";
 
+$treat =~ s/undig/diges/ if defined $cut;
+
+#defined $cut   ? "2. IgG1 diges rich" : 
+
+	print "sampleID=$LCY$sampleID$N, cut=$LPR$cutprint$N, sample=$LGN$sample$N, treat=$YW$treat$N\n";
 	return($sample, $treat);
 }
 sub get_igtype {
@@ -143,7 +153,7 @@ sub get_igtype {
 #my @end0ind =   (114675000,114649999 ,114589999 ,114563999  ,114539999  ,114519999,114507999,114489999         ,114999999);
 my @beg0ind =   (114656769,114594435 ,114563451 ,114541176  ,114523536  ,114507471,114493041,114000000         ,114675001);
 my @end0ind =   (114670052,114609628 ,114582590 ,114559110  ,114539403  ,114520744,114508309,114489999         ,114999999);
-my @junctypes = ("01. IgM","02. IgG3","03. IgG1","04. IgG2b","05. IgG2c","06. IgE","07. IgA","08. IgA Down100k","09. IgM Up250k","10. Chr12","11. Other Chrs");
+my @junctypes = ("01. IgM","03. IgG3","02. IgG1","04. IgG2b","05. IgG2c","06. IgE","07. IgA","08. IgA Down100k","09. IgM Up250k","10. Chr12","11. Other Chrs");
 
 	my ($junctype, $junc1dist, $junc2dist, $length1, $length2);
 	$junc1dist = $junc1pos - $beg0ind[0];

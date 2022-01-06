@@ -163,7 +163,7 @@ $YW-------------------------
 -------------------------$N
 
 ";
-
+#
 my $ind = 0;
 open (my $out1, ">", "$outFile") or die "Cannot write to $outFile: $!\n";
 foreach my $sampleID (sort keys %data) {
@@ -260,3 +260,4 @@ sub myformat {
 	return $val;
 }
 
+__END__
