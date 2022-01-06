@@ -77,8 +77,10 @@ run_Rscript.pl graph_and_juncdist.R
 
 # C.2. Method 2:
 both.pl -i ./
-run_Rscript.pl both_bigtable.R
+run_Rscript.pl Jackie_JuncDist.R
+run_Rscript.pl JackieTCseq_BigTable.R  
+run_Rscript.pl JackieTCseq_NEW_combined.R  
 
-# results3.pdf = junc distance figure
-# results1_run1_IgG..pdf etc = % read containing <mutation> out of total read. These should be similar between C.1. and C.2.
+# results_*.pdf = barplots of mutations
+# results3_*.pdf = junc distance figure and barplots
 ```
