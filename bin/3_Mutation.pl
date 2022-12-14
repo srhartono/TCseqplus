@@ -59,6 +59,7 @@ die "\n${LRD}ERROR!$N:\nsampleID from -I ($LGN$optIprt$N) or -i ($sIDprt) has to
 my $metaFile    = $opt_m; 
 	$metaFile    = "/group/stella/Work/Data/Fastq/200323_SLIMS0323_BC_mm_TCseq_JackieBarlowTCseq/0_Fastq/0_META.TXT" if $metaFile eq 1;
 	$metaFile    = "/group/stella/Work/Data/Fastq/200903_SLIMS4168_BC_mm_TCseq_JackieBarlowTCseq/0_Fastq/0_META.TXT" if $metaFile eq 2;
+	$metaFile    = "/group/stella/Work/Data/Fastq/220303_SLIMS4832_BC_mm_TCseq_JackieBarlowTCseq/0_Fastq/0_META.TXT.FULL" if $metaFile eq 3;
 my ($metaFolder, $metaFilename) = getFilename($metaFile, "folderfull");
 
 my $debug_num   = defined $opt_D ? $opt_D : 0;
@@ -793,11 +794,11 @@ foreach my $name (sort {$DATA->{$a}{order} <=> $DATA->{$b}{order}} keys %{$DATA}
 		$nexted_reason .= "\n${LRD}NEXTED$N! INFO: $name strand1=$strand1 strand2=$strand2$LRD is juncmissing $N(beg_pos=$beg_pos, end_pos=$end_pos, junc=$junc)\n\n";
 		$nexted = 1;
 	}
-	elsif ($igtype !~ /(IgM|IgG1|IgG3)$/) {
-		$nexted_others ++;
-		$nexted_reason .= "\n${LRD}NEXTED$N! INFO: $name strand1=$strand1 strand2=$strand2$LRD is not at IgM/G1/G3$N (igtype=$LCY$igtype$N, beg_pos=$beg_pos, end_pos=$end_pos, junc=$junc)\n\n";
-		$nexted = 1;
-	}
+	#elsif ($igtype !~ /(IgM|IgG1|IgG3)$/) {
+	#	$nexted_others ++;
+	#	$nexted_reason .= "\n${LRD}NEXTED$N! INFO: $name strand1=$strand1 strand2=$strand2$LRD is not at IgM/G1/G3$N (igtype=$LCY$igtype$N, beg_pos=$beg_pos, end_pos=$end_pos, junc=$junc)\n\n";
+	#	$nexted = 1;
+	#}
 	else {
 		$okay{$name} = 1;
 		$good ++;
