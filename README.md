@@ -21,6 +21,9 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
+### Citation ###
+
+Zhao H, Hartono S, De Vera K, Yu Z, Satchi K, Zhao T, Sciammas R, Sanz L, Chedin F, Barlow J (2022) Senataxin and RNase H2 act redundantly to suppress genome instability during class switch recombination. eLife 12:e78917. https://doi.org/10.7554/eLife.78917
 
 ### 0. Synopsis
 
